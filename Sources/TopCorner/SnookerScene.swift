@@ -79,11 +79,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var foulFlag      = false
 
     // Shot tracking
-    private var waitingForStop  = false
-    private var ballsWereMoving = false
-    private var pottedThisShot  = false
-    private var foulThisShot    = false
-    private var foulPenalty     = 0
+    private var waitingForStop       = false
+    private var ballsWereMoving      = false
+    private var pottedThisShot       = false
+    private var foulThisShot         = false
+    private var foulPenalty          = 0
+    private var firstBallHit: BallType? = nil
+    private var cueBallPottedThisShot = false
 
     // Power
     private var powerMultiplier: CGFloat = 3   // 1–5, user-adjustable
@@ -304,7 +306,11 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         body.angularDamping = 0.3
         body.categoryBitMask    = PhysicsCategory.ball.rawValue
         body.collisionBitMask   = PhysicsCategory.ball.rawValue | PhysicsCategory.cushion.rawValue
-        body.contactTestBitMask = PhysicsCategory.pocket.rawValue
+        // Cue ball also reports ball-ball contacts so we can track first-ball-hit
+        let contactMask = type == .cue
+            ? PhysicsCategory.pocket.rawValue | PhysicsCategory.ball.rawValue
+            : PhysicsCategory.pocket.rawValue
+        body.contactTestBitMask = contactMask
         body.allowsRotation     = true
         node.physicsBody = body
 
@@ -659,11 +665,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let impulse = CGVector(dx: (dx / dist) * scale, dy: (dy / dist) * scale)
         cue.physicsBody?.applyImpulse(impulse)
 
-        waitingForStop  = true
-        ballsWereMoving = false
-        pottedThisShot  = false
-        foulThisShot    = false
-        foulPenalty     = 0
+        waitingForStop        = true
+        ballsWereMoving       = false
+        pottedThisShot        = false
+        foulThisShot          = false
+        foulPenalty           = 0
+        firstBallHit          = nil
+        cueBallPottedThisShot = false
     }
 
     private func adjustPower(_ delta: CGFloat) {
@@ -715,10 +723,22 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let (nodeA, nodeB) = (contact.bodyA.node, contact.bodyB.node)
         let isPocketA = nodeA?.name == "pocket"
         let isPocketB = nodeB?.name == "pocket"
+
+        // Track the first object ball the cue ball touches this shot
+        if !isPocketA && !isPocketB && waitingForStop && firstBallHit == nil {
+            let isCueA = nodeA === cueBall
+            let isCueB = nodeB === cueBall
+            if isCueA || isCueB {
+                let other = (isCueA ? nodeB : nodeA) as? SKShapeNode
+                if let other, let type = balls[other] {
+                    firstBallHit = type
+                }
+            }
+        }
+
         guard isPocketA || isPocketB else { return }
         let potentialBall = isPocketA ? nodeB : nodeA
         guard let ballNode = potentialBall as? SKShapeNode else { return }
-
         guard let type = balls[ballNode] else { return }
         potBall(node: ballNode, type: type)
     }
@@ -729,6 +749,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         if type == .cue {
             // Cue ball potted — foul
+            cueBallPottedThisShot = true
             recordFoul(penalty: cueBallFoulPenalty())
             run(SKAction.sequence([
                 SKAction.wait(forDuration: 0.8),
@@ -759,8 +780,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
                     respawnColour(type)
                 }
                 phase = redsOnTable > 0 ? .needRed : .redsAllGone
+            } else if pottedThisShot {
+                // Extra red potted in the same shot as a previous red — legal,
+                // scores 1pt each; player still owes one colour (phase stays needColour)
+                redsOnTable -= 1
+                scores[currentPlayer] += type.points
             } else {
-                // Foul — red when colour required; red stays off table
+                // Foul — red potted on a shot where colour was required
                 recordFoul(penalty: 4)
                 redsOnTable -= 1
             }
@@ -894,21 +920,47 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func endOfShot() {
+        // Check "fail to hit nominated ball" — skip if cue ball was already potted (covered separately)
+        if !cueBallPottedThisShot {
+            if let hit = firstBallHit {
+                if !isCorrectFirstBall(hit) {
+                    recordFoul(penalty: cueBallFoulPenalty())
+                }
+            } else {
+                // Cue ball hit nothing at all — foul
+                recordFoul(penalty: cueBallFoulPenalty())
+            }
+        }
+
         if foulThisShot {
             // Award penalty to opponent and hand over turn
             let opponent = 1 - currentPlayer
             scores[opponent] += foulPenalty
             currentPlayer = opponent
         } else if !pottedThisShot {
-            // Miss — switch player
+            // Clean miss — switch player, clear foul display
             currentPlayer = 1 - currentPlayer
             foulFlag = false
         }
-        // Potted with no foul → same player continues
-        pottedThisShot = false
-        foulThisShot   = false
-        foulPenalty    = 0
+        // Clean pot → same player continues
+
+        pottedThisShot        = false
+        foulThisShot          = false
+        foulPenalty           = 0
+        firstBallHit          = nil
+        cueBallPottedThisShot = false
         updateUI()
+    }
+
+    private func isCorrectFirstBall(_ type: BallType) -> Bool {
+        switch phase {
+        case .needRed:
+            return type == .red
+        case .needColour:
+            return type != .red   // any colour is valid (player's choice)
+        case .redsAllGone:
+            return type == clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
+        }
     }
 
     // MARK: Helpers
@@ -942,11 +994,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         currentPlayer  = 0
         phase          = .needRed
         foulFlag       = false
-        waitingForStop  = false
-        ballsWereMoving = false
-        pottedThisShot  = false
-        foulThisShot    = false
-        foulPenalty     = 0
+        waitingForStop        = false
+        ballsWereMoving       = false
+        pottedThisShot        = false
+        foulThisShot          = false
+        foulPenalty           = 0
+        firstBallHit          = nil
+        cueBallPottedThisShot = false
         clearanceIndex = 0
         redsOnTable    = 0
 
