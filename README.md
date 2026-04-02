@@ -1,4 +1,6 @@
-# SnookerMenuBar
+# Top Corner
+
+> *Nobody has to know.*
 
 A snooker game that lives in your macOS menu bar. Built with SpriteKit, no Xcode project required.
 
@@ -22,14 +24,14 @@ A snooker game that lives in your macOS menu bar. Built with SpriteKit, no Xcode
 Double-click `install.command`. It will:
 
 1. Build a release binary with `swift build`
-2. Assemble `SnookerMenuBar.app` in `~/Applications`
+2. Assemble `TopCorner.app` in `~/Applications`
 3. Launch the app
 
 Or build and run directly:
 
 ```bash
 swift build
-.build/debug/SnookerMenuBar
+.build/debug/TopCorner
 ```
 
 ## How to play
@@ -58,13 +60,13 @@ Potting the cue ball or the wrong ball type is a foul and deducts points.
 ## Project structure
 
 ```
-SnookerMenuBar/
-├── Package.swift                          # SPM build definition
-├── Info.plist                             # LSUIElement — hides Dock icon
-├── install.command                        # One-click build + install script
-└── Sources/SnookerMenuBar/
-    ├── main.swift                         # Entry point
-    ├── AppDelegate.swift                  # Menu bar status item + popover
-    ├── GameViewController.swift           # Hosts the SKView
-    └── SnookerScene.swift                 # Game logic, physics, UI
+top-corner/
+├── Package.swift                    # SPM build definition
+├── Info.plist                       # LSUIElement — hides Dock icon
+├── install.command                  # One-click build + install script
+└── Sources/TopCorner/
+    ├── main.swift                   # Entry point
+    ├── AppDelegate.swift            # Menu bar status item + popover
+    ├── GameViewController.swift     # Hosts the SKView
+    └── SnookerScene.swift           # Game logic, physics, UI
 ```

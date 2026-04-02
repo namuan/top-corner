@@ -18,10 +18,10 @@ if ! xcode-select -p >/dev/null 2>&1; then
 fi
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP_NAME="SnookerMenuBar"
+APP_NAME="TopCorner"
 DERIVED="$ROOT/.build"
 BINARY="$DERIVED/release/$APP_NAME"
-ICON_PNG="$ROOT/Sources/SnookerMenuBar/Resources/icon.png"
+ICON_PNG="$ROOT/Sources/TopCorner/Resources/icon.png"
 ICONSET_DIR="$DERIVED/AppIcon.iconset"
 ICON_ICNS="$DERIVED/AppIcon.icns"
 DEST_DIR="$HOME/Applications"
@@ -76,11 +76,11 @@ build_app_bundle() {
   <key>CFBundleExecutable</key>
   <string>$APP_NAME</string>
   <key>CFBundleIdentifier</key>
-  <string>com.snooker.menubar</string>
+  <string>com.topcorner.app</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
-  <string>Snooker</string>
+  <string>Top Corner</string>
   <key>CFBundleVersion</key>
   <string>1.0</string>
   <key>CFBundleShortVersionString</key>

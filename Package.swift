@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "SnookerMenuBar",
+    name: "TopCorner",
     platforms: [
         .macOS(.v14)
     ],
     targets: [
         .executableTarget(
-            name: "SnookerMenuBar",
-            path: "Sources/SnookerMenuBar",
+            name: "TopCorner",
+            path: "Sources/TopCorner",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SpriteKit"),

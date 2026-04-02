@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let button = statusItem.button {
             let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-            button.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Snooker")?
+            button.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Top Corner")?
                 .withSymbolConfiguration(config)
             button.action = #selector(togglePopover)
             button.target = self
