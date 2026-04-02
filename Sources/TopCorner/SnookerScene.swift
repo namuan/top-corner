@@ -72,17 +72,28 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var redsOnTable         = 0
 
     // Game state
-    private var score         = 0
+    private var scores        = [0, 0]    // [player1, player2]
+    private var currentPlayer = 0         // 0 = P1, 1 = P2
     private var phase: TurnPhase = .needRed
     private var lastRedPotted = false
     private var foulFlag      = false
+
+    // Shot tracking
+    private var waitingForStop  = false
+    private var ballsWereMoving = false
+    private var pottedThisShot  = false
+    private var foulThisShot    = false
+    private var foulPenalty     = 0
 
     // Power
     private var powerMultiplier: CGFloat = 3   // 1–5, user-adjustable
     private var powerPips: [SKShapeNode] = []
 
     // UI
-    private var scoreLabel:       SKLabelNode!
+    private var score1Label:      SKLabelNode!
+    private var score2Label:      SKLabelNode!
+    private var player1Dot:       SKShapeNode!
+    private var player2Dot:       SKShapeNode!
     private var messageLabel:     SKLabelNode!
     private var nextBallIndicator: SKShapeNode!
     private var nextBallLabel:    SKLabelNode!
@@ -335,16 +346,51 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         addChild(divider)
 
         // ── SCORE section (top) ───────────────────────────────────────
-        addSideHeader("SCORE", y: 348)
-        scoreLabel = SKLabelNode(fontNamed: "Helvetica Neue Bold")
-        scoreLabel.fontSize   = 26
-        scoreLabel.fontColor  = .white
-        scoreLabel.position   = CGPoint(x: sideCX, y: 306)
-        scoreLabel.horizontalAlignmentMode = .center
-        scoreLabel.zPosition  = 10
-        addChild(scoreLabel)
+        addSideHeader("SCORE", y: 358)
 
-        addSideSeparator(y: 288)
+        // Player 1 row
+        player1Dot = SKShapeNode(circleOfRadius: 4)
+        player1Dot.position  = CGPoint(x: sideInL + 4, y: 342)
+        player1Dot.zPosition = 11
+        addChild(player1Dot)
+        let p1Lbl = SKLabelNode(text: "P1")
+        p1Lbl.fontName  = "Helvetica Neue"
+        p1Lbl.fontSize  = 11
+        p1Lbl.fontColor = NSColor(white: 0.75, alpha: 1)
+        p1Lbl.position  = CGPoint(x: sideInL + 16, y: 336)
+        p1Lbl.horizontalAlignmentMode = .left
+        p1Lbl.zPosition = 10
+        addChild(p1Lbl)
+        score1Label = SKLabelNode(fontNamed: "Helvetica Neue Bold")
+        score1Label.fontSize  = 16
+        score1Label.fontColor = .white
+        score1Label.position  = CGPoint(x: sideInR, y: 336)
+        score1Label.horizontalAlignmentMode = .right
+        score1Label.zPosition = 10
+        addChild(score1Label)
+
+        // Player 2 row
+        player2Dot = SKShapeNode(circleOfRadius: 4)
+        player2Dot.position  = CGPoint(x: sideInL + 4, y: 318)
+        player2Dot.zPosition = 11
+        addChild(player2Dot)
+        let p2Lbl = SKLabelNode(text: "P2")
+        p2Lbl.fontName  = "Helvetica Neue"
+        p2Lbl.fontSize  = 11
+        p2Lbl.fontColor = NSColor(white: 0.75, alpha: 1)
+        p2Lbl.position  = CGPoint(x: sideInL + 16, y: 312)
+        p2Lbl.horizontalAlignmentMode = .left
+        p2Lbl.zPosition = 10
+        addChild(p2Lbl)
+        score2Label = SKLabelNode(fontNamed: "Helvetica Neue Bold")
+        score2Label.fontSize  = 16
+        score2Label.fontColor = NSColor(white: 0.55, alpha: 1)
+        score2Label.position  = CGPoint(x: sideInR, y: 312)
+        score2Label.horizontalAlignmentMode = .right
+        score2Label.zPosition = 10
+        addChild(score2Label)
+
+        addSideSeparator(y: 298)
 
         // ── NEXT BALL section ─────────────────────────────────────────
         addSideHeader("NEXT BALL", y: 276)
@@ -514,7 +560,20 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func updateUI() {
-        scoreLabel.text = "Score: \(score)"
+        score1Label.text = "\(scores[0])"
+        score2Label.text = "\(scores[1])"
+
+        let activeColor   = NSColor.white
+        let inactiveColor = NSColor(white: 0.45, alpha: 1)
+        let dotActive     = NSColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1)
+        let dotInactive   = NSColor(white: 0.3, alpha: 1)
+
+        player1Dot.fillColor   = currentPlayer == 0 ? dotActive : dotInactive
+        player1Dot.strokeColor = .clear
+        player2Dot.fillColor   = currentPlayer == 1 ? dotActive : dotInactive
+        player2Dot.strokeColor = .clear
+        score1Label.fontColor  = currentPlayer == 0 ? activeColor : inactiveColor
+        score2Label.fontColor  = currentPlayer == 1 ? activeColor : inactiveColor
 
         switch phase {
         case .needRed:
@@ -530,7 +589,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         }
 
         if foulFlag {
-            messageLabel.text = "FOUL!"
+            messageLabel.text = "FOUL! +\(foulPenalty) to P\(currentPlayer == 0 ? 2 : 1)"
             messageLabel.fontColor = NSColor.orange
         } else {
             messageLabel.text = ""
@@ -599,6 +658,12 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let scale = min(dist / 120, 1.0) * maxForce
         let impulse = CGVector(dx: (dx / dist) * scale, dy: (dy / dist) * scale)
         cue.physicsBody?.applyImpulse(impulse)
+
+        waitingForStop  = true
+        ballsWereMoving = false
+        pottedThisShot  = false
+        foulThisShot    = false
+        foulPenalty     = 0
     }
 
     private func adjustPower(_ delta: CGFloat) {
@@ -664,10 +729,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         if type == .cue {
             // Cue ball potted — foul
-            foulFlag = true
-            score    = max(0, score - 4)
+            recordFoul(penalty: cueBallFoulPenalty())
             run(SKAction.sequence([
-                SKAction.wait(forDuration: 0.5),
+                SKAction.wait(forDuration: 0.8),
                 SKAction.run { [weak self] in self?.respawnCueBall() }
             ]))
             updateUI()
@@ -678,45 +742,62 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         case .needRed:
             if type == .red {
                 redsOnTable -= 1
-                score += type.points
+                scores[currentPlayer] += type.points
+                pottedThisShot = true
                 phase = .needColour
             } else {
-                // Foul — potted a colour when red required
-                foulFlag = true
-                score    = max(0, score - max(4, type.points))
+                // Foul — colour when red required
+                recordFoul(penalty: max(4, type.points))
                 respawnColour(type)
             }
 
         case .needColour:
             if type != .red {
-                score += type.points
-                // Colour goes back unless reds all gone
+                scores[currentPlayer] += type.points
+                pottedThisShot = true
                 if redsOnTable > 0 {
                     respawnColour(type)
                 }
                 phase = redsOnTable > 0 ? .needRed : .redsAllGone
             } else {
-                // Potted another red — allowed in some house rules; treat as valid
+                // Foul — red when colour required; red stays off table
+                recordFoul(penalty: 4)
                 redsOnTable -= 1
-                score += type.points
             }
 
         case .redsAllGone:
             let required = clearanceOrder[clearanceIndex]
             if type == required {
-                score += type.points
+                scores[currentPlayer] += type.points
+                pottedThisShot = true
                 clearanceIndex += 1
                 if clearanceIndex >= clearanceOrder.count {
                     showWin()
                 }
             } else {
-                foulFlag = true
-                score    = max(0, score - max(4, type.points))
+                // Foul — wrong colour in clearance
+                recordFoul(penalty: max(4, type.points))
                 respawnColour(type)
             }
         }
 
         updateUI()
+    }
+
+    private func recordFoul(penalty: Int) {
+        foulFlag     = true
+        foulThisShot = true
+        foulPenalty  = max(foulPenalty, penalty)   // keep the highest if multiple fouls
+    }
+
+    private func cueBallFoulPenalty() -> Int {
+        switch phase {
+        case .needRed:    return 4
+        case .needColour: return 4
+        case .redsAllGone:
+            let on = clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
+            return max(4, on.points)
+        }
     }
 
     private func respawnCueBall() {
@@ -800,6 +881,36 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         }
     }
 
+    // MARK: Shot completion
+
+    override func didSimulatePhysics() {
+        guard waitingForStop else { return }
+        let moving = isBallMoving()
+        if moving { ballsWereMoving = true; return }
+        guard ballsWereMoving else { return }   // wait until balls have moved at least once
+        waitingForStop  = false
+        ballsWereMoving = false
+        endOfShot()
+    }
+
+    private func endOfShot() {
+        if foulThisShot {
+            // Award penalty to opponent and hand over turn
+            let opponent = 1 - currentPlayer
+            scores[opponent] += foulPenalty
+            currentPlayer = opponent
+        } else if !pottedThisShot {
+            // Miss — switch player
+            currentPlayer = 1 - currentPlayer
+            foulFlag = false
+        }
+        // Potted with no foul → same player continues
+        pottedThisShot = false
+        foulThisShot   = false
+        foulPenalty    = 0
+        updateUI()
+    }
+
     // MARK: Helpers
 
     private func isBallMoving() -> Bool {
@@ -811,8 +922,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func showWin() {
-        messageLabel.text = "Frame Over!  Break: \(score)"
-        messageLabel.fontColor = NSColor.green
+        let winner = scores[0] > scores[1] ? "P1" : (scores[1] > scores[0] ? "P2" : "Draw")
+        messageLabel.text = "Frame over! \(winner) wins"
+        messageLabel.fontColor = NSColor(red: 0.3, green: 1.0, blue: 0.4, alpha: 1)
     }
 
     private func resetGame() {
@@ -826,11 +938,17 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         dHighlight = nil
         isPlacingCueBall    = false
         isDraggingPlacement = false
-        score         = 0
-        phase         = .needRed
-        foulFlag      = false
+        scores         = [0, 0]
+        currentPlayer  = 0
+        phase          = .needRed
+        foulFlag       = false
+        waitingForStop  = false
+        ballsWereMoving = false
+        pottedThisShot  = false
+        foulThisShot    = false
+        foulPenalty     = 0
         clearanceIndex = 0
-        redsOnTable   = 0
+        redsOnTable    = 0
 
         spawnBalls()
         updateUI()
