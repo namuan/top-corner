@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let viewController = GameViewController()
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 560, height: 380)
+        popover.contentSize = NSSize(width: 820, height: 380)
         popover.behavior = .transient
         popover.contentViewController = viewController
     }

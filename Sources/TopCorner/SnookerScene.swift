@@ -54,9 +54,9 @@ private enum TurnPhase {
 final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     // Layout
-    private let tableRect   = CGRect(x: 40, y: 50, width: 480, height: 280)
-    private let ballRadius:  CGFloat = 8
-    private let pocketRadius: CGFloat = 12
+    private let tableRect    = CGRect(x: 8, y: 8, width: 656, height: 364)
+    private let ballRadius:  CGFloat = 10
+    private let pocketRadius: CGFloat = 15
 
     // Nodes
     private var cueBall: SKShapeNode!
@@ -76,13 +76,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     // Power
     private var powerMultiplier: CGFloat = 3   // 1–5, user-adjustable
+    private var powerPips: [SKShapeNode] = []
 
     // UI
-    private var scoreLabel:    SKLabelNode!
-    private var messageLabel:  SKLabelNode!
+    private var scoreLabel:       SKLabelNode!
+    private var messageLabel:     SKLabelNode!
     private var nextBallIndicator: SKShapeNode!
-    private var nextBallLabel: SKLabelNode!
-    private var powerLabel:    SKLabelNode!
+    private var nextBallLabel:    SKLabelNode!
+    private var powerLabel:       SKLabelNode!
 
     // Colours in clearance order
     private let clearanceOrder: [BallType] = [.yellow, .green, .brown, .blue, .pink, .black]
@@ -127,7 +128,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         // D semi-circle
         let dCenter = CGPoint(x: baulkX, y: tableRect.midY)
-        let dRadius: CGFloat = 40
+        let dRadius = tableRect.width * 0.083
         let dPath = CGMutablePath()
         dPath.addArc(center: dCenter, radius: dRadius, startAngle: .pi / 2, endAngle: -.pi / 2, clockwise: true)
         let dArc = SKShapeNode(path: dPath)
@@ -290,135 +291,211 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     // MARK: UI
 
-    private func setupUI() {
-        // Layout constants for the 560×50 bottom bar
-        // Zone 1: Score  x=10..110  (left-anchored)
-        // Zone 2: Message            (centered at x=195)
-        // Zone 3: Next ball          (label right-edge at x=388, dot at x=398)
-        // Zone 4: Buttons            (Reset x=414..471, Quit x=476..533)
-        let btnY: CGFloat      = 13   // button rect bottom
-        let btnH: CGFloat      = 24   // button height
-        let textY: CGFloat     = 18   // label baseline (≈ vertical center of bar)
+    // Sidebar geometry constants
+    // Scene: 820×380. Table occupies x=8..664, y=8..372.
+    // Sidebar: x=672..820 (148px wide), centered at x=746.
+    private let sideX:   CGFloat = 672   // sidebar left edge
+    private let sideCX:  CGFloat = 746   // sidebar centre x
+    private let sideInL: CGFloat = 680   // inner left  (8px padding)
+    private let sideInR: CGFloat = 812   // inner right (8px padding)
+    private let sideW:   CGFloat = 132   // inner usable width
 
-        // Score — Zone 1
-        scoreLabel = SKLabelNode(fontNamed: "Helvetica Neue")
-        scoreLabel.fontSize    = 13
-        scoreLabel.fontColor   = .white
-        scoreLabel.position    = CGPoint(x: 10, y: textY)
-        scoreLabel.horizontalAlignmentMode = .left
-        scoreLabel.zPosition   = 10
+    private func setupUI() {
+        // ── Sidebar panel background ──────────────────────────────────
+        let panel = SKShapeNode(rect: CGRect(x: sideX, y: 0, width: 148, height: 380))
+        panel.fillColor   = NSColor(white: 0.10, alpha: 1)
+        panel.strokeColor = .clear
+        panel.zPosition   = 9
+        addChild(panel)
+
+        // Left edge accent line
+        let divider = SKShapeNode()
+        let dp = CGMutablePath()
+        dp.move(to: CGPoint(x: sideX, y: 0))
+        dp.addLine(to: CGPoint(x: sideX, y: 380))
+        divider.path = dp
+        divider.strokeColor = NSColor(white: 0.28, alpha: 1)
+        divider.lineWidth   = 1
+        divider.zPosition   = 9
+        addChild(divider)
+
+        // ── SCORE section (top) ───────────────────────────────────────
+        addSideHeader("SCORE", y: 348)
+        scoreLabel = SKLabelNode(fontNamed: "Helvetica Neue Bold")
+        scoreLabel.fontSize   = 26
+        scoreLabel.fontColor  = .white
+        scoreLabel.position   = CGPoint(x: sideCX, y: 306)
+        scoreLabel.horizontalAlignmentMode = .center
+        scoreLabel.zPosition  = 10
         addChild(scoreLabel)
 
-        // Message — Zone 2
+        addSideSeparator(y: 288)
+
+        // ── NEXT BALL section ─────────────────────────────────────────
+        addSideHeader("NEXT BALL", y: 276)
+        nextBallIndicator = SKShapeNode(circleOfRadius: 16)
+        nextBallIndicator.position    = CGPoint(x: sideCX, y: 242)
+        nextBallIndicator.strokeColor = NSColor.white.withAlphaComponent(0.35)
+        nextBallIndicator.lineWidth   = 1
+        nextBallIndicator.zPosition   = 10
+        addChild(nextBallIndicator)
+
+        nextBallLabel = SKLabelNode(fontNamed: "Helvetica Neue")
+        nextBallLabel.fontSize  = 11
+        nextBallLabel.fontColor = NSColor(white: 0.75, alpha: 1)
+        nextBallLabel.position  = CGPoint(x: sideCX, y: 216)
+        nextBallLabel.horizontalAlignmentMode = .center
+        nextBallLabel.zPosition = 10
+        addChild(nextBallLabel)
+
+        addSideSeparator(y: 204)
+
+        // ── STATUS / MESSAGE ──────────────────────────────────────────
         messageLabel = SKLabelNode(fontNamed: "Helvetica Neue")
-        messageLabel.fontSize  = 12
+        messageLabel.fontSize  = 11
         messageLabel.fontColor = NSColor.yellow
-        messageLabel.position  = CGPoint(x: 195, y: textY)
+        messageLabel.position  = CGPoint(x: sideCX, y: 188)
         messageLabel.horizontalAlignmentMode = .center
         messageLabel.zPosition = 10
         addChild(messageLabel)
 
-        // Next ball — Zone 3: label then dot
-        nextBallLabel = SKLabelNode(fontNamed: "Helvetica Neue")
-        nextBallLabel.fontSize = 11
-        nextBallLabel.fontColor = NSColor(white: 0.8, alpha: 1)
-        nextBallLabel.position = CGPoint(x: 348, y: textY)
-        nextBallLabel.horizontalAlignmentMode = .right
-        nextBallLabel.zPosition = 10
-        addChild(nextBallLabel)
+        addSideSeparator(y: 176)
 
-        nextBallIndicator = SKShapeNode(circleOfRadius: 7)
-        nextBallIndicator.position = CGPoint(x: 360, y: textY + 5)
-        nextBallIndicator.strokeColor = NSColor.white.withAlphaComponent(0.4)
-        nextBallIndicator.lineWidth = 0.5
-        nextBallIndicator.zPosition = 10
-        addChild(nextBallIndicator)
+        // ── POWER section ─────────────────────────────────────────────
+        addSideHeader("POWER", y: 164)
 
-        // Reset button — Zone 4
-        let resetBg = SKShapeNode(rect: CGRect(x: 376, y: btnY, width: 58, height: btnH), cornerRadius: 4)
-        resetBg.fillColor   = NSColor(white: 0.28, alpha: 1)
-        resetBg.strokeColor = NSColor(white: 0.45, alpha: 1)
+        // [–] button
+        let minusBg = SKShapeNode(rect: CGRect(x: sideInL, y: 130, width: 26, height: 26), cornerRadius: 4)
+        minusBg.fillColor   = NSColor(white: 0.25, alpha: 1)
+        minusBg.strokeColor = NSColor(white: 0.40, alpha: 1)
+        minusBg.lineWidth   = 0.5
+        minusBg.zPosition   = 10
+        minusBg.name        = "pwrMinus"
+        addChild(minusBg)
+        let minusLbl = SKLabelNode(text: "–")
+        minusLbl.fontName  = "Helvetica Neue"
+        minusLbl.fontSize  = 16
+        minusLbl.fontColor = .white
+        minusLbl.position  = CGPoint(x: sideInL + 13, y: 133)
+        minusLbl.horizontalAlignmentMode = .center
+        minusLbl.zPosition = 11
+        minusLbl.name      = "pwrMinus"
+        addChild(minusLbl)
+
+        // [+] button
+        let plusBg = SKShapeNode(rect: CGRect(x: sideInR - 26, y: 130, width: 26, height: 26), cornerRadius: 4)
+        plusBg.fillColor   = NSColor(white: 0.25, alpha: 1)
+        plusBg.strokeColor = NSColor(white: 0.40, alpha: 1)
+        plusBg.lineWidth   = 0.5
+        plusBg.zPosition   = 10
+        plusBg.name        = "pwrPlus"
+        addChild(plusBg)
+        let plusLbl = SKLabelNode(text: "+")
+        plusLbl.fontName  = "Helvetica Neue"
+        plusLbl.fontSize  = 15
+        plusLbl.fontColor = .white
+        plusLbl.position  = CGPoint(x: sideInR - 13, y: 134)
+        plusLbl.horizontalAlignmentMode = .center
+        plusLbl.zPosition = 11
+        plusLbl.name      = "pwrPlus"
+        addChild(plusLbl)
+
+        // Power number label
+        powerLabel = SKLabelNode(fontNamed: "Helvetica Neue Bold")
+        powerLabel.fontSize  = 15
+        powerLabel.fontColor = .white
+        powerLabel.position  = CGPoint(x: sideCX, y: 134)
+        powerLabel.horizontalAlignmentMode = .center
+        powerLabel.zPosition = 11
+        addChild(powerLabel)
+
+        // Power pip indicators
+        powerPips = []
+        let pipSpacing: CGFloat = 18
+        let pipStartX = sideCX - pipSpacing * 2
+        for i in 0..<5 {
+            let pip = SKShapeNode(circleOfRadius: 5)
+            pip.position  = CGPoint(x: pipStartX + CGFloat(i) * pipSpacing, y: 116)
+            pip.lineWidth = 1
+            pip.zPosition = 10
+            addChild(pip)
+            powerPips.append(pip)
+        }
+        updatePowerPips()
+
+        addSideSeparator(y: 104)
+
+        // ── RESET button ──────────────────────────────────────────────
+        let resetBg = SKShapeNode(rect: CGRect(x: sideInL, y: 66, width: sideW, height: 30), cornerRadius: 5)
+        resetBg.fillColor   = NSColor(white: 0.25, alpha: 1)
+        resetBg.strokeColor = NSColor(white: 0.42, alpha: 1)
         resetBg.lineWidth   = 0.5
         resetBg.zPosition   = 10
         resetBg.name        = "resetBtn"
         addChild(resetBg)
+        let resetLbl = SKLabelNode(text: "New Game")
+        resetLbl.fontName   = "Helvetica Neue"
+        resetLbl.fontSize   = 12
+        resetLbl.fontColor  = .white
+        resetLbl.position   = CGPoint(x: sideCX, y: 74)
+        resetLbl.horizontalAlignmentMode = .center
+        resetLbl.zPosition  = 11
+        resetLbl.name       = "resetBtn"
+        addChild(resetLbl)
 
-        let resetLabel = SKLabelNode(text: "Reset")
-        resetLabel.fontName   = "Helvetica Neue"
-        resetLabel.fontSize   = 11
-        resetLabel.fontColor  = .white
-        resetLabel.position   = CGPoint(x: 405, y: textY)
-        resetLabel.horizontalAlignmentMode = .center
-        resetLabel.zPosition  = 11
-        resetLabel.name       = "resetBtn"
-        addChild(resetLabel)
-
-        // Quit button — Zone 4
-        let quitBg = SKShapeNode(rect: CGRect(x: 441, y: btnY, width: 52, height: btnH), cornerRadius: 4)
-        quitBg.fillColor   = NSColor(red: 0.50, green: 0.10, blue: 0.10, alpha: 1)
-        quitBg.strokeColor = NSColor(red: 0.70, green: 0.20, blue: 0.20, alpha: 1)
+        // ── QUIT button ───────────────────────────────────────────────
+        let quitBg = SKShapeNode(rect: CGRect(x: sideInL, y: 26, width: sideW, height: 30), cornerRadius: 5)
+        quitBg.fillColor   = NSColor(red: 0.45, green: 0.08, blue: 0.08, alpha: 1)
+        quitBg.strokeColor = NSColor(red: 0.65, green: 0.18, blue: 0.18, alpha: 1)
         quitBg.lineWidth   = 0.5
         quitBg.zPosition   = 10
         quitBg.name        = "quitBtn"
         addChild(quitBg)
-
-        let quitLabel = SKLabelNode(text: "Quit")
-        quitLabel.fontName   = "Helvetica Neue"
-        quitLabel.fontSize   = 11
-        quitLabel.fontColor  = .white
-        quitLabel.position   = CGPoint(x: 467, y: textY)
-        quitLabel.horizontalAlignmentMode = .center
-        quitLabel.zPosition  = 11
-        quitLabel.name       = "quitBtn"
-        addChild(quitLabel)
-
-        // Power controls — Zone 5: [–] power [+]
-        let pwrMinusBg = SKShapeNode(rect: CGRect(x: 500, y: btnY, width: 22, height: btnH), cornerRadius: 4)
-        pwrMinusBg.fillColor   = NSColor(white: 0.28, alpha: 1)
-        pwrMinusBg.strokeColor = NSColor(white: 0.45, alpha: 1)
-        pwrMinusBg.lineWidth   = 0.5
-        pwrMinusBg.zPosition   = 10
-        pwrMinusBg.name        = "pwrMinus"
-        addChild(pwrMinusBg)
-
-        let pwrMinusLabel = SKLabelNode(text: "–")
-        pwrMinusLabel.fontName  = "Helvetica Neue"
-        pwrMinusLabel.fontSize  = 14
-        pwrMinusLabel.fontColor = .white
-        pwrMinusLabel.position  = CGPoint(x: 511, y: textY - 1)
-        pwrMinusLabel.horizontalAlignmentMode = .center
-        pwrMinusLabel.zPosition = 11
-        pwrMinusLabel.name      = "pwrMinus"
-        addChild(pwrMinusLabel)
-
-        powerLabel = SKLabelNode(text: "Pwr:3")
-        powerLabel.fontName   = "Helvetica Neue"
-        powerLabel.fontSize   = 11
-        powerLabel.fontColor  = NSColor(white: 0.85, alpha: 1)
-        powerLabel.position   = CGPoint(x: 535, y: textY)
-        powerLabel.horizontalAlignmentMode = .center
-        powerLabel.zPosition  = 11
-        addChild(powerLabel)
-
-        let pwrPlusBg = SKShapeNode(rect: CGRect(x: 555, y: btnY, width: 22, height: btnH), cornerRadius: 4)
-        pwrPlusBg.fillColor   = NSColor(white: 0.28, alpha: 1)
-        pwrPlusBg.strokeColor = NSColor(white: 0.45, alpha: 1)
-        pwrPlusBg.lineWidth   = 0.5
-        pwrPlusBg.zPosition   = 10
-        pwrPlusBg.name        = "pwrPlus"
-        addChild(pwrPlusBg)
-
-        let pwrPlusLabel = SKLabelNode(text: "+")
-        pwrPlusLabel.fontName  = "Helvetica Neue"
-        pwrPlusLabel.fontSize  = 13
-        pwrPlusLabel.fontColor = .white
-        pwrPlusLabel.position  = CGPoint(x: 566, y: textY)
-        pwrPlusLabel.horizontalAlignmentMode = .center
-        pwrPlusLabel.zPosition = 11
-        pwrPlusLabel.name      = "pwrPlus"
-        addChild(pwrPlusLabel)
+        let quitLbl = SKLabelNode(text: "Quit")
+        quitLbl.fontName   = "Helvetica Neue"
+        quitLbl.fontSize   = 12
+        quitLbl.fontColor  = .white
+        quitLbl.position   = CGPoint(x: sideCX, y: 34)
+        quitLbl.horizontalAlignmentMode = .center
+        quitLbl.zPosition  = 11
+        quitLbl.name       = "quitBtn"
+        addChild(quitLbl)
 
         updateUI()
+    }
+
+    private func addSideHeader(_ text: String, y: CGFloat) {
+        let lbl = SKLabelNode(text: text)
+        lbl.fontName  = "Helvetica Neue"
+        lbl.fontSize  = 9
+        lbl.fontColor = NSColor(white: 0.45, alpha: 1)
+        lbl.position  = CGPoint(x: sideCX, y: y)
+        lbl.horizontalAlignmentMode = .center
+        lbl.zPosition = 10
+        addChild(lbl)
+    }
+
+    private func addSideSeparator(y: CGFloat) {
+        let sep = SKShapeNode()
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: sideInL, y: y))
+        p.addLine(to: CGPoint(x: sideInR, y: y))
+        sep.path        = p
+        sep.strokeColor = NSColor(white: 0.25, alpha: 1)
+        sep.lineWidth   = 0.5
+        sep.zPosition   = 10
+        addChild(sep)
+    }
+
+    private func updatePowerPips() {
+        let active   = NSColor(red: 0.95, green: 0.60, blue: 0.10, alpha: 1)
+        let inactive = NSColor(white: 0.25, alpha: 1)
+        for (i, pip) in powerPips.enumerated() {
+            let on = i < Int(powerMultiplier)
+            pip.fillColor   = on ? active : inactive
+            pip.strokeColor = on ? active.withAlphaComponent(0.5) : NSColor(white: 0.35, alpha: 1)
+        }
+        powerLabel.text = "\(Int(powerMultiplier))"
     }
 
     private func updateUI() {
@@ -493,7 +570,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     private func adjustPower(_ delta: CGFloat) {
         powerMultiplier = max(1, min(5, powerMultiplier + delta))
-        powerLabel.text = "Pwr:\(Int(powerMultiplier))"
+        updatePowerPips()
     }
 
     private func drawAimLine(from start: CGPoint, to end: CGPoint) {
