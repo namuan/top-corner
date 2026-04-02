@@ -93,7 +93,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // MARK: Scene lifecycle
 
     override func didMove(to view: SKView) {
-        backgroundColor = NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1)
+        backgroundColor = NSColor(red: 0.12, green: 0.18, blue: 0.12, alpha: 1)
         physicsWorld.gravity   = .zero
         physicsWorld.contactDelegate = self
 
@@ -107,11 +107,20 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // MARK: Table
 
     private func setupTable() {
-        let baize = SKShapeNode(rect: tableRect, cornerRadius: 4)
-        baize.fillColor   = NSColor(red: 0.04, green: 0.36, blue: 0.12, alpha: 1)
-        baize.strokeColor = NSColor(red: 0.45, green: 0.25, blue: 0.05, alpha: 1)
-        baize.lineWidth   = 8
-        baize.zPosition   = 0
+        // Outer cream rail/frame — sits behind everything
+        let railRect = tableRect.insetBy(dx: -14, dy: -14)
+        let rail = SKShapeNode(rect: railRect, cornerRadius: 10)
+        rail.fillColor   = NSColor(red: 0.91, green: 0.88, blue: 0.82, alpha: 1)
+        rail.strokeColor = NSColor(red: 0.70, green: 0.66, blue: 0.58, alpha: 1)
+        rail.lineWidth   = 2
+        rail.zPosition   = 0
+        addChild(rail)
+
+        // Green baize — vivid, like the reference image
+        let baize = SKShapeNode(rect: tableRect, cornerRadius: 3)
+        baize.fillColor   = NSColor(red: 0.07, green: 0.52, blue: 0.16, alpha: 1)
+        baize.strokeColor = .clear
+        baize.zPosition   = 1
         addChild(baize)
 
         // Baulk line
@@ -121,20 +130,20 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         path.move(to: CGPoint(x: baulkX, y: tableRect.minY + 4))
         path.addLine(to: CGPoint(x: baulkX, y: tableRect.maxY - 4))
         baulkLine.path = path
-        baulkLine.strokeColor = NSColor.white.withAlphaComponent(0.25)
-        baulkLine.lineWidth = 1
-        baulkLine.zPosition = 1
+        baulkLine.strokeColor = NSColor.white.withAlphaComponent(0.55)
+        baulkLine.lineWidth = 1.5
+        baulkLine.zPosition = 2
         addChild(baulkLine)
 
         // D semi-circle
         let dCenter = CGPoint(x: baulkX, y: tableRect.midY)
         let dRadius = tableRect.width * 0.083
         let dPath = CGMutablePath()
-        dPath.addArc(center: dCenter, radius: dRadius, startAngle: .pi / 2, endAngle: -.pi / 2, clockwise: true)
+        dPath.addArc(center: dCenter, radius: dRadius, startAngle: .pi / 2, endAngle: -.pi / 2, clockwise: false)
         let dArc = SKShapeNode(path: dPath)
-        dArc.strokeColor = NSColor.white.withAlphaComponent(0.25)
-        dArc.lineWidth = 1
-        dArc.zPosition = 1
+        dArc.strokeColor = NSColor.white.withAlphaComponent(0.55)
+        dArc.lineWidth = 1.5
+        dArc.zPosition = 2
         addChild(dArc)
     }
 
@@ -163,7 +172,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         for (rect, _) in segments {
             let node = SKShapeNode(rect: rect)
-            node.fillColor   = NSColor(red: 0.45, green: 0.25, blue: 0.05, alpha: 1)
+            node.fillColor   = NSColor(red: 0.07, green: 0.52, blue: 0.16, alpha: 1)
             node.strokeColor = .clear
             node.zPosition   = 2
 
@@ -196,9 +205,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         for pos in positions {
             let pocket = SKShapeNode(circleOfRadius: pR)
             pocket.position    = pos
-            pocket.fillColor   = NSColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1)
-            pocket.strokeColor = NSColor(red: 0.20, green: 0.10, blue: 0.02, alpha: 1)
-            pocket.lineWidth   = 2
+            pocket.fillColor   = NSColor(red: 0.91, green: 0.88, blue: 0.82, alpha: 1)
+            pocket.strokeColor = NSColor(red: 0.70, green: 0.66, blue: 0.58, alpha: 1)
+            pocket.lineWidth   = 1.5
             pocket.zPosition   = 3
             pocket.name        = "pocket"
 
@@ -223,13 +232,15 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         // Coloured ball spots
         let t = tableRect
+        let baulkX  = t.minX + t.width * 0.22
+        let dOffset = t.height * 0.161   // ≈ 11.5/71.5 of table width — yellow/green are one D-radius from brown
         let colourSpots: [(BallType, CGPoint)] = [
-            (.yellow, CGPoint(x: t.minX + t.width * 0.22 - 20, y: t.midY)),
-            (.green,  CGPoint(x: t.minX + t.width * 0.22 + 20, y: t.midY)),
-            (.brown,  CGPoint(x: t.minX + t.width * 0.22,      y: t.midY)),
+            (.yellow, CGPoint(x: baulkX, y: t.midY - dOffset)),
+            (.green,  CGPoint(x: baulkX, y: t.midY + dOffset)),
+            (.brown,  CGPoint(x: baulkX, y: t.midY)),
             (.blue,   CGPoint(x: t.midX,                        y: t.midY)),
             (.pink,   CGPoint(x: t.minX + t.width * 0.72,      y: t.midY)),
-            (.black,  CGPoint(x: t.minX + t.width * 0.88,      y: t.midY)),
+            (.black,  CGPoint(x: t.minX + t.width * 0.935,      y: t.midY)),
         ]
 
         for (type, spot) in colourSpots {
@@ -694,13 +705,15 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     private func respawnColour(_ type: BallType) {
         let t = tableRect
+        let baulkX  = t.minX + t.width * 0.22
+        let dOffset = t.height * 0.161
         let spots: [BallType: CGPoint] = [
-            .yellow: CGPoint(x: t.minX + t.width * 0.22 - 20, y: t.midY),
-            .green:  CGPoint(x: t.minX + t.width * 0.22 + 20, y: t.midY),
-            .brown:  CGPoint(x: t.minX + t.width * 0.22,      y: t.midY),
+            .yellow: CGPoint(x: baulkX, y: t.midY - dOffset),
+            .green:  CGPoint(x: baulkX, y: t.midY + dOffset),
+            .brown:  CGPoint(x: baulkX, y: t.midY),
             .blue:   CGPoint(x: t.midX,                        y: t.midY),
             .pink:   CGPoint(x: t.minX + t.width * 0.72,      y: t.midY),
-            .black:  CGPoint(x: t.minX + t.width * 0.88,      y: t.midY),
+            .black:  CGPoint(x: t.minX + t.width * 0.935,      y: t.midY),
         ]
         if let spot = spots[type] {
             let node = makeBall(type: type, at: spot)
