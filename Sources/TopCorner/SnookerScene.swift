@@ -64,12 +64,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var aimLine: SKShapeNode?
 
     // Input
-    private var isDragging          = false
-    private var dragStart           = CGPoint.zero
-    private var isPlacingCueBall    = false
-    private var isDraggingPlacement = false
+    private var isDragging            = false
+    private var dragStart             = CGPoint.zero
+    private var isPlacingCueBall      = false
+    private var isDraggingPlacement   = false
+    private var lastValidPlacementPos = CGPoint.zero
     private var dHighlight: SKShapeNode?
-    private var redsOnTable         = 0
+    private var redsOnTable           = 0
 
     // Game state
     private var scores        = [0, 0]    // [player1, player2]
@@ -615,8 +616,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         // Cue ball placement mode
         if isPlacingCueBall {
-            isDraggingPlacement = true
-            cueBall.position = clampToD(loc)
+            isDraggingPlacement   = true
+            lastValidPlacementPos = cueBall.position
+            let candidate = clampToD(loc)
+            if !overlapsAnyBall(candidate) {
+                cueBall.position      = candidate
+                lastValidPlacementPos = candidate
+            }
             return
         }
 
@@ -635,7 +641,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let loc = event.location(in: self)
 
         if isDraggingPlacement {
-            cueBall.position = clampToD(loc)
+            let candidate = clampToD(loc)
+            if !overlapsAnyBall(candidate) {
+                cueBall.position      = candidate
+                lastValidPlacementPos = candidate
+            } else {
+                cueBall.position = lastValidPlacementPos
+            }
             return
         }
 
@@ -645,6 +657,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     override func mouseUp(with event: NSEvent) {
         if isDraggingPlacement {
+            cueBall.position = lastValidPlacementPos
             exitCueBallPlacement()
             return
         }
@@ -835,8 +848,11 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     private func enterCueBallPlacement() {
         isPlacingCueBall = true
-        // Freeze the ball while positioning
-        cueBall.physicsBody?.isDynamic = false
+        // Ghost the ball — remove from physics category system entirely while positioning
+        cueBall.physicsBody?.isDynamic          = false
+        cueBall.physicsBody?.categoryBitMask    = 0
+        cueBall.physicsBody?.collisionBitMask   = 0
+        cueBall.physicsBody?.contactTestBitMask = 0
 
         // Highlight the D area
         let t = tableRect
@@ -865,11 +881,25 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private func exitCueBallPlacement() {
         isPlacingCueBall    = false
         isDraggingPlacement = false
-        cueBall.physicsBody?.isDynamic = true
+        cueBall.physicsBody?.isDynamic          = true
+        cueBall.physicsBody?.categoryBitMask    = PhysicsCategory.ball.rawValue
+        cueBall.physicsBody?.collisionBitMask   = PhysicsCategory.ball.rawValue | PhysicsCategory.cushion.rawValue
+        cueBall.physicsBody?.contactTestBitMask = PhysicsCategory.pocket.rawValue | PhysicsCategory.ball.rawValue
         dHighlight?.removeFromParent()
         dHighlight = nil
         foulFlag = false
         updateUI()
+    }
+
+    // Returns true if placing the cue ball at point would overlap any other ball
+    private func overlapsAnyBall(_ point: CGPoint) -> Bool {
+        let minDist = ballRadius * 2
+        for (node, _) in balls where node !== cueBall {
+            if hypot(point.x - node.position.x, point.y - node.position.y) < minDist {
+                return true
+            }
+        }
+        return false
     }
 
     // Returns the nearest valid point inside the D for a given location
