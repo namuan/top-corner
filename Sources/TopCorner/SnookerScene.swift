@@ -64,9 +64,12 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var aimLine: SKShapeNode?
 
     // Input
-    private var isDragging    = false
-    private var dragStart     = CGPoint.zero
-    private var redsOnTable   = 0
+    private var isDragging          = false
+    private var dragStart           = CGPoint.zero
+    private var isPlacingCueBall    = false
+    private var isDraggingPlacement = false
+    private var dHighlight: SKShapeNode?
+    private var redsOnTable         = 0
 
     // Game state
     private var score         = 0
@@ -100,8 +103,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         setupTable()
         setupCushions()
         setupPockets()
-        spawnBalls()
         setupUI()
+        spawnBalls()
     }
 
     // MARK: Table
@@ -205,10 +208,10 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         for pos in positions {
             let pocket = SKShapeNode(circleOfRadius: pR)
             pocket.position    = pos
-            pocket.fillColor   = NSColor(red: 0.91, green: 0.88, blue: 0.82, alpha: 1)
-            pocket.strokeColor = NSColor(red: 0.70, green: 0.66, blue: 0.58, alpha: 1)
+            pocket.fillColor   = NSColor(red: 0.04, green: 0.04, blue: 0.04, alpha: 1)
+            pocket.strokeColor = NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1)
             pocket.lineWidth   = 1.5
-            pocket.zPosition   = 3
+            pocket.zPosition   = 6
             pocket.name        = "pocket"
 
             let body = SKPhysicsBody(circleOfRadius: pR)
@@ -233,7 +236,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         // Coloured ball spots
         let t = tableRect
         let baulkX  = t.minX + t.width * 0.22
-        let dOffset = t.height * 0.161   // ≈ 11.5/71.5 of table width — yellow/green are one D-radius from brown
+        let dOffset = t.width * 0.083    // same as D arc radius — yellow/green sit exactly on the D circle
         let colourSpots: [(BallType, CGPoint)] = [
             (.yellow, CGPoint(x: baulkX, y: t.midY - dOffset)),
             (.green,  CGPoint(x: baulkX, y: t.midY + dOffset)),
@@ -248,9 +251,10 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             colouredBalls[type] = node
         }
 
-        // Cue ball in D
+        // Cue ball — start in placement mode
         let cueBallPos = CGPoint(x: t.minX + t.width * 0.18, y: t.midY)
         cueBall = makeBall(type: .cue, at: cueBallPos)
+        enterCueBallPlacement()
 
         // 15 reds in triangle
         spawnRedTriangle()
@@ -544,7 +548,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         if tapped.name == "pwrMinus" { adjustPower(-1); return }
         if tapped.name == "pwrPlus"  { adjustPower(+1); return }
 
-        // Only start drag if clicking near cue ball and balls are settled
+        // Cue ball placement mode
+        if isPlacingCueBall {
+            isDraggingPlacement = true
+            cueBall.position = clampToD(loc)
+            return
+        }
+
+        // Only start shot drag if clicking near cue ball and balls are settled
         guard let cue = cueBall, !isBallMoving() else { return }
         let d = hypot(loc.x - cue.position.x, loc.y - cue.position.y)
         if d < ballRadius * 3 {
@@ -556,12 +567,23 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard isDragging else { return }
         let loc = event.location(in: self)
+
+        if isDraggingPlacement {
+            cueBall.position = clampToD(loc)
+            return
+        }
+
+        guard isDragging else { return }
         drawAimLine(from: dragStart, to: loc)
     }
 
     override func mouseUp(with event: NSEvent) {
+        if isDraggingPlacement {
+            exitCueBallPlacement()
+            return
+        }
+
         guard isDragging, let cue = cueBall else { return }
         isDragging = false
         aimLine?.removeFromParent()
@@ -701,12 +723,69 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let t = tableRect
         let pos = CGPoint(x: t.minX + t.width * 0.18, y: t.midY)
         cueBall = makeBall(type: .cue, at: pos)
+        enterCueBallPlacement()
+    }
+
+    private func enterCueBallPlacement() {
+        isPlacingCueBall = true
+        // Freeze the ball while positioning
+        cueBall.physicsBody?.isDynamic = false
+
+        // Highlight the D area
+        let t = tableRect
+        let baulkX = t.minX + t.width * 0.22
+        let dRadius = t.width * 0.083
+        let dCenter = CGPoint(x: baulkX, y: t.midY)
+        let dPath = CGMutablePath()
+        dPath.move(to: CGPoint(x: baulkX, y: dCenter.y - dRadius))
+        dPath.addLine(to: CGPoint(x: baulkX, y: dCenter.y + dRadius))
+        dPath.addArc(center: dCenter, radius: dRadius,
+                     startAngle: -.pi / 2, endAngle: .pi / 2, clockwise: false)
+        dPath.closeSubpath()
+        let highlight = SKShapeNode(path: dPath)
+        highlight.fillColor   = NSColor.white.withAlphaComponent(0.12)
+        highlight.strokeColor = NSColor.white.withAlphaComponent(0.45)
+        highlight.lineWidth   = 1.5
+        highlight.zPosition   = 4
+        highlight.name        = "dHighlight"
+        addChild(highlight)
+        dHighlight = highlight
+
+        messageLabel.text      = "Place cue ball in D"
+        messageLabel.fontColor = NSColor(red: 0.4, green: 0.9, blue: 1.0, alpha: 1)
+    }
+
+    private func exitCueBallPlacement() {
+        isPlacingCueBall    = false
+        isDraggingPlacement = false
+        cueBall.physicsBody?.isDynamic = true
+        dHighlight?.removeFromParent()
+        dHighlight = nil
+        foulFlag = false
+        updateUI()
+    }
+
+    // Returns the nearest valid point inside the D for a given location
+    private func clampToD(_ point: CGPoint) -> CGPoint {
+        let t = tableRect
+        let baulkX  = t.minX + t.width * 0.22
+        let dCenter = CGPoint(x: baulkX, y: t.midY)
+        let dRadius = t.width * 0.083
+        var p = CGPoint(x: min(point.x, baulkX), y: point.y)
+        let dx = p.x - dCenter.x
+        let dy = p.y - dCenter.y
+        let dist = hypot(dx, dy)
+        if dist > dRadius {
+            p.x = dCenter.x + (dx / dist) * dRadius
+            p.y = dCenter.y + (dy / dist) * dRadius
+        }
+        return p
     }
 
     private func respawnColour(_ type: BallType) {
         let t = tableRect
         let baulkX  = t.minX + t.width * 0.22
-        let dOffset = t.height * 0.161
+        let dOffset = t.width * 0.083
         let spots: [BallType: CGPoint] = [
             .yellow: CGPoint(x: baulkX, y: t.midY - dOffset),
             .green:  CGPoint(x: baulkX, y: t.midY + dOffset),
@@ -743,6 +822,10 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         cueBall = nil
         aimLine?.removeFromParent()
         aimLine = nil
+        dHighlight?.removeFromParent()
+        dHighlight = nil
+        isPlacingCueBall    = false
+        isDraggingPlacement = false
         score         = 0
         phase         = .needRed
         foulFlag      = false
