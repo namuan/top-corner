@@ -239,8 +239,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             (.green,  CGPoint(x: baulkX, y: t.midY + dOffset)),
             (.brown,  CGPoint(x: baulkX, y: t.midY)),
             (.blue,   CGPoint(x: t.midX,                        y: t.midY)),
-            (.pink,   CGPoint(x: t.minX + t.width * 0.72,      y: t.midY)),
-            (.black,  CGPoint(x: t.minX + t.width * 0.935,      y: t.midY)),
+            (.pink,   CGPoint(x: t.minX + t.width * 0.78 - ballRadius * 2,      y: t.midY)),
+            (.black,  CGPoint(x: t.minX + t.width * 0.955,      y: t.midY)),
         ]
 
         for (type, spot) in colourSpots {
@@ -712,8 +712,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             .green:  CGPoint(x: baulkX, y: t.midY + dOffset),
             .brown:  CGPoint(x: baulkX, y: t.midY),
             .blue:   CGPoint(x: t.midX,                        y: t.midY),
-            .pink:   CGPoint(x: t.minX + t.width * 0.72,      y: t.midY),
-            .black:  CGPoint(x: t.minX + t.width * 0.935,      y: t.midY),
+            .pink:   CGPoint(x: t.minX + t.width * 0.78 - ballRadius * 2,      y: t.midY),
+            .black:  CGPoint(x: t.minX + t.width * 0.955,      y: t.midY),
         ]
         if let spot = spots[type] {
             let node = makeBall(type: type, at: spot)
