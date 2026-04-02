@@ -562,7 +562,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let dist = hypot(dx, dy)
         guard dist > 4 else { return }
 
-        let maxForce: CGFloat = 60 * powerMultiplier
+        let maxForce: CGFloat = 150 * powerMultiplier
         let scale = min(dist / 120, 1.0) * maxForce
         let impulse = CGVector(dx: (dx / dist) * scale, dy: (dy / dist) * scale)
         cue.physicsBody?.applyImpulse(impulse)
