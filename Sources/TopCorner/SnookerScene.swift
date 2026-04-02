@@ -74,11 +74,15 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var lastRedPotted = false
     private var foulFlag      = false
 
+    // Power
+    private var powerMultiplier: CGFloat = 3   // 1–5, user-adjustable
+
     // UI
     private var scoreLabel:    SKLabelNode!
     private var messageLabel:  SKLabelNode!
     private var nextBallIndicator: SKShapeNode!
     private var nextBallLabel: SKLabelNode!
+    private var powerLabel:    SKLabelNode!
 
     // Colours in clearance order
     private let clearanceOrder: [BallType] = [.yellow, .green, .brown, .blue, .pink, .black]
@@ -269,8 +273,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         body.mass           = 1.0
         body.friction       = 0.25
         body.restitution    = 0.85
-        body.linearDamping  = 0.7
-        body.angularDamping = 0.7
+        body.linearDamping  = 0.3
+        body.angularDamping = 0.3
         body.categoryBitMask    = PhysicsCategory.ball.rawValue
         body.collisionBitMask   = PhysicsCategory.ball.rawValue | PhysicsCategory.cushion.rawValue
         body.contactTestBitMask = PhysicsCategory.pocket.rawValue
@@ -368,6 +372,52 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         quitLabel.name       = "quitBtn"
         addChild(quitLabel)
 
+        // Power controls — Zone 5: [–] power [+]
+        let pwrMinusBg = SKShapeNode(rect: CGRect(x: 500, y: btnY, width: 22, height: btnH), cornerRadius: 4)
+        pwrMinusBg.fillColor   = NSColor(white: 0.28, alpha: 1)
+        pwrMinusBg.strokeColor = NSColor(white: 0.45, alpha: 1)
+        pwrMinusBg.lineWidth   = 0.5
+        pwrMinusBg.zPosition   = 10
+        pwrMinusBg.name        = "pwrMinus"
+        addChild(pwrMinusBg)
+
+        let pwrMinusLabel = SKLabelNode(text: "–")
+        pwrMinusLabel.fontName  = "Helvetica Neue"
+        pwrMinusLabel.fontSize  = 14
+        pwrMinusLabel.fontColor = .white
+        pwrMinusLabel.position  = CGPoint(x: 511, y: textY - 1)
+        pwrMinusLabel.horizontalAlignmentMode = .center
+        pwrMinusLabel.zPosition = 11
+        pwrMinusLabel.name      = "pwrMinus"
+        addChild(pwrMinusLabel)
+
+        powerLabel = SKLabelNode(text: "Pwr:3")
+        powerLabel.fontName   = "Helvetica Neue"
+        powerLabel.fontSize   = 11
+        powerLabel.fontColor  = NSColor(white: 0.85, alpha: 1)
+        powerLabel.position   = CGPoint(x: 535, y: textY)
+        powerLabel.horizontalAlignmentMode = .center
+        powerLabel.zPosition  = 11
+        addChild(powerLabel)
+
+        let pwrPlusBg = SKShapeNode(rect: CGRect(x: 555, y: btnY, width: 22, height: btnH), cornerRadius: 4)
+        pwrPlusBg.fillColor   = NSColor(white: 0.28, alpha: 1)
+        pwrPlusBg.strokeColor = NSColor(white: 0.45, alpha: 1)
+        pwrPlusBg.lineWidth   = 0.5
+        pwrPlusBg.zPosition   = 10
+        pwrPlusBg.name        = "pwrPlus"
+        addChild(pwrPlusBg)
+
+        let pwrPlusLabel = SKLabelNode(text: "+")
+        pwrPlusLabel.fontName  = "Helvetica Neue"
+        pwrPlusLabel.fontSize  = 13
+        pwrPlusLabel.fontColor = .white
+        pwrPlusLabel.position  = CGPoint(x: 566, y: textY)
+        pwrPlusLabel.horizontalAlignmentMode = .center
+        pwrPlusLabel.zPosition = 11
+        pwrPlusLabel.name      = "pwrPlus"
+        addChild(pwrPlusLabel)
+
         updateUI()
     }
 
@@ -403,6 +453,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let tapped = atPoint(loc)
         if tapped.name == "resetBtn" { resetGame(); return }
         if tapped.name == "quitBtn"  { NSApp.terminate(nil); return }
+        if tapped.name == "pwrMinus" { adjustPower(-1); return }
+        if tapped.name == "pwrPlus"  { adjustPower(+1); return }
 
         // Only start drag if clicking near cue ball and balls are settled
         guard let cue = cueBall, !isBallMoving() else { return }
@@ -433,10 +485,15 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let dist = hypot(dx, dy)
         guard dist > 4 else { return }
 
-        let maxForce: CGFloat = 18
+        let maxForce: CGFloat = 60 * powerMultiplier
         let scale = min(dist / 120, 1.0) * maxForce
         let impulse = CGVector(dx: (dx / dist) * scale, dy: (dy / dist) * scale)
         cue.physicsBody?.applyImpulse(impulse)
+    }
+
+    private func adjustPower(_ delta: CGFloat) {
+        powerMultiplier = max(1, min(5, powerMultiplier + delta))
+        powerLabel.text = "Pwr:\(Int(powerMultiplier))"
     }
 
     private func drawAimLine(from start: CGPoint, to end: CGPoint) {
