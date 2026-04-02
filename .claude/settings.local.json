@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift build:*)",
+      "Bash(open:*)",
+      "Bash(chmod +x:*)",
+      "Bash(pkill -x SnookerMenuBar)",
+      "Bash(bash:*)"
+    ]
+  }
+}
