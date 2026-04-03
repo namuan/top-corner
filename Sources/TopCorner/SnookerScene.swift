@@ -1284,69 +1284,53 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     private func performAIShot() {
         guard let cue = cueBall, currentPlayer == 1, !isPlacingCueBall else { return }
-        guard let target = findAITarget() else { return }
 
-        let pockets     = aiPocketPositions()
-        let targetType  = balls[target] ?? .red
-        // Obstacle positions for Hard-mode path checking (exclude cue and target)
-        let obstacles   = balls.keys.filter { $0 !== cue && $0 !== target }.map { $0.position }
+        let impulse: CGVector
+        let logDesc: String
 
-        // Evaluate each pocket. For Hard difficulty only consider clear paths;
-        // fall back to any path if every pocket is obstructed.
-        var bestDir      = CGVector(dx: 1, dy: 0)
-        var bestCost     = CGFloat.infinity
-        var bestDirAny   = CGVector(dx: 1, dy: 0)  // fallback ignoring obstructions
-        var bestCostAny  = CGFloat.infinity
-        var clearedPocketFound = false
-
-        for pocket in pockets {
-            let tdx = target.position.x - pocket.x
-            let tdy = target.position.y - pocket.y
-            let td  = hypot(tdx, tdy)
-            guard td > 0 else { continue }
-
-            // Ghost contact point: on far side of target, 2r away from its centre
-            let contact = CGPoint(
-                x: target.position.x + (tdx / td) * ballRadius * 2,
-                y: target.position.y + (tdy / td) * ballRadius * 2
-            )
-
-            let cdx = contact.x - cue.position.x
-            let cdy = contact.y - cue.position.y
-            let cd  = hypot(cdx, cdy)
-            guard cd > 0 else { continue }
-
-            // Track unconditional best (used as fallback)
-            if cd < bestCostAny {
-                bestCostAny = cd
-                bestDirAny  = CGVector(dx: cdx / cd, dy: cdy / cd)
+        if aiDifficulty == .hard {
+            // Hard mode: evaluate every valid target × every pocket, pick highest probability.
+            guard let best = bestHardShot(cue: cue) else { return }
+            let maxErr = aiDifficulty.angleError
+            let error  = CGFloat.random(in: -maxErr...maxErr)
+            let angle  = atan2(best.direction.dy, best.direction.dx) + error
+            let force: CGFloat = 120 * powerMultiplier
+            impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
+            logDesc = "target: \(best.targetType) at (\(String(format:"%.1f", best.target.position.x)), \(String(format:"%.1f", best.target.position.y))), prob: \(String(format:"%.2f", best.probability)), angle error: \(String(format:"%.3f", error)) rad"
+        } else {
+            // Easy / Medium: simple nearest-ball + nearest-pocket logic.
+            guard let target = findAITarget() else { return }
+            let targetType = balls[target] ?? .red
+            let pockets    = aiPocketPositions()
+            var bestDir    = CGVector(dx: 1, dy: 0)
+            var bestCost   = CGFloat.infinity
+            for pocket in pockets {
+                let tdx = target.position.x - pocket.x
+                let tdy = target.position.y - pocket.y
+                let td  = hypot(tdx, tdy)
+                guard td > 0 else { continue }
+                let contact = CGPoint(
+                    x: target.position.x + (tdx / td) * ballRadius * 2,
+                    y: target.position.y + (tdy / td) * ballRadius * 2
+                )
+                let cdx = contact.x - cue.position.x
+                let cdy = contact.y - cue.position.y
+                let cd  = hypot(cdx, cdy)
+                guard cd > 0 else { continue }
+                if cd < bestCost {
+                    bestCost = cd
+                    bestDir  = CGVector(dx: cdx / cd, dy: cdy / cd)
+                }
             }
-
-            // Hard mode: skip paths where another ball is in the way
-            if aiDifficulty == .hard {
-                guard isCuePath(from: cue.position, to: contact, clearOf: obstacles) else { continue }
-            }
-
-            if cd < bestCost {
-                bestCost = cd
-                bestDir  = CGVector(dx: cdx / cd, dy: cdy / cd)
-                clearedPocketFound = true
-            }
+            let maxErr = aiDifficulty.angleError
+            let error  = CGFloat.random(in: -maxErr...maxErr)
+            let angle  = atan2(bestDir.dy, bestDir.dx) + error
+            let force: CGFloat = 120 * powerMultiplier
+            impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
+            logDesc = "target: \(targetType) at (\(String(format:"%.1f", target.position.x)), \(String(format:"%.1f", target.position.y))), angle error: \(String(format:"%.3f", error)) rad"
         }
 
-        // If Hard mode found no clear pocket, fall back to nearest regardless of obstruction
-        if !clearedPocketFound {
-            bestDir = bestDirAny
-            gLog("AI (Hard) — no clear path found, falling back to nearest pocket", .warning)
-        }
-
-        // Add random angular error scaled to difficulty
-        let maxErr = aiDifficulty.angleError
-        let error  = CGFloat.random(in: -maxErr...maxErr)
-        let angle  = atan2(bestDir.dy, bestDir.dx) + error
-        let force: CGFloat = 120 * powerMultiplier
-        let impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
-        gLog("AI shot — target: \(targetType) at (\(String(format:"%.1f", target.position.x)), \(String(format:"%.1f", target.position.y))), angle error: \(String(format:"%.3f", error)) rad, clear path: \(clearedPocketFound), impulse (dx:\(String(format:"%.1f", impulse.dx)) dy:\(String(format:"%.1f", impulse.dy)))")
+        gLog("AI shot (\(aiDifficulty.label)) — \(logDesc), impulse (dx:\(String(format:"%.1f", impulse.dx)) dy:\(String(format:"%.1f", impulse.dy)))")
         cue.physicsBody?.applyImpulse(impulse)
 
         waitingForStop        = true
@@ -1360,39 +1344,120 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         shotClearanceIndex    = clearanceIndex
     }
 
+    // MARK: Hard-mode shot selection
+
+    private struct EvaluatedShot {
+        let target:     SKShapeNode
+        let targetType: BallType
+        let direction:  CGVector
+        let probability: CGFloat
+    }
+
+    /// Returns all valid target nodes for the current phase.
+    private func validAITargets() -> [(node: SKShapeNode, type: BallType)] {
+        switch phase {
+        case .needRed:
+            return balls.filter { $0.value == .red }.map { ($0.key, $0.value) }
+        case .needColour:
+            return colouredBalls.map { ($0.value, $0.key) }
+        case .redsAllGone:
+            let required = clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
+            if let node = colouredBalls[required] { return [(node, required)] }
+            return []
+        }
+    }
+
+    /// Scores one (target, pocket) combination.
+    /// Returns the cue-ball direction and a probability in [0, 1].
+    private func evaluateShot(cuePos: CGPoint,
+                               target: SKShapeNode,
+                               pocket: CGPoint,
+                               obstacles: [CGPoint]) -> (direction: CGVector, probability: CGFloat) {
+        let tdx = target.position.x - pocket.x
+        let tdy = target.position.y - pocket.y
+        let td  = hypot(tdx, tdy)
+        guard td > 0 else { return (.zero, 0) }
+
+        // Ghost-ball contact point
+        let contact = CGPoint(
+            x: target.position.x + (tdx / td) * ballRadius * 2,
+            y: target.position.y + (tdy / td) * ballRadius * 2
+        )
+
+        let cdx = contact.x - cuePos.x
+        let cdy = contact.y - cuePos.y
+        let cd  = hypot(cdx, cdy)
+        guard cd > 0 else { return (.zero, 0) }
+
+        let dir = CGVector(dx: cdx / cd, dy: cdy / cd)
+
+        // Cut angle: between cue-travel direction and target→pocket direction
+        let potDirX = (pocket.x - target.position.x) / td
+        let potDirY = (pocket.y - target.position.y) / td
+        let dot      = max(-1, min(1, Double(dir.dx * potDirX + dir.dy * potDirY)))
+        let cutAngle = CGFloat(acos(dot))
+
+        // Angle factor: 1.0 for straight (0°), 0.0 at 90° — drops off as cos²
+        let angleFactor = pow(max(0, CGFloat(cos(Double(cutAngle)))), 2)
+
+        // Distance factor: shorter total travel = easier
+        let totalDist   = cd + td
+        let distFactor  = exp(-totalDist / 500)
+
+        // Path factor: heavily penalise if the cue path is obstructed
+        let targetObs = obstacles.filter {
+            hypot($0.x - target.position.x, $0.y - target.position.y) > ballRadius * 2
+        }
+        let pathFactor: CGFloat = isCuePath(from: cuePos, to: contact, clearOf: targetObs) ? 1.0 : 0.05
+
+        return (dir, angleFactor * distFactor * pathFactor)
+    }
+
+    /// Evaluates all valid targets × all pockets and returns the best shot.
+    private func bestHardShot(cue: SKShapeNode) -> EvaluatedShot? {
+        let targets   = validAITargets()
+        let pockets   = aiPocketPositions()
+        let obstacles = balls.keys.filter { $0 !== cue }.map { $0.position }
+
+        var best: EvaluatedShot?
+
+        for (node, type) in targets {
+            // Exclude the target ball itself from the obstacle list
+            let obs = obstacles.filter {
+                hypot($0.x - node.position.x, $0.y - node.position.y) > ballRadius * 2
+            }
+            for pocket in pockets {
+                let (dir, prob) = evaluateShot(cuePos: cue.position,
+                                               target: node,
+                                               pocket: pocket,
+                                               obstacles: obs)
+                if prob > (best?.probability ?? 0) {
+                    best = EvaluatedShot(target: node, targetType: type, direction: dir, probability: prob)
+                }
+            }
+        }
+
+        if let best {
+            gLog("AI (Hard) best shot: \(best.targetType), prob \(String(format:"%.3f", best.probability))", .debug)
+        } else {
+            gLog("AI (Hard) — no shot found", .warning)
+        }
+        return best
+    }
+
     private func findAITarget() -> SKShapeNode? {
         let cuePos = cueBall?.position ?? tableRect.center
         switch phase {
         case .needRed:
             let reds = balls.filter { $0.value == .red }.map { $0.key }
             guard !reds.isEmpty else { return nil }
-            if aiDifficulty.usesRandomTarget {
-                return reds.randomElement()
-            }
-            // Medium/Hard: nearest red
+            if aiDifficulty.usesRandomTarget { return reds.randomElement() }
             return reds.min {
                 hypot($0.position.x - cuePos.x, $0.position.y - cuePos.y) <
                 hypot($1.position.x - cuePos.x, $1.position.y - cuePos.y)
             }
         case .needColour:
-            if aiDifficulty.usesRandomTarget {
-                return colouredBalls.values.randomElement()
-            }
-            // Hard: walk highest → lowest value, pick first colour that has at
-            // least one unobstructed cue-path to a pocket.
-            if aiDifficulty == .hard, let cue = cueBall {
-                let obstacles = balls.keys.filter { $0 !== cue }.map { $0.position }
-                for t in [BallType.black, .pink, .blue, .brown, .green, .yellow] {
-                    guard let node = colouredBalls[t] else { continue }
-                    if hasAnyClearShot(cuePos: cue.position, target: node, obstacles: obstacles) {
-                        gLog("AI (Hard) needColour — chose \(t) (clear path exists)", .debug)
-                        return node
-                    }
-                }
-                // All colours obstructed — fall back to highest available
-                gLog("AI (Hard) needColour — all colours obstructed, falling back to black", .warning)
-            }
-            // Medium (or Hard fallback): highest value colour
+            if aiDifficulty.usesRandomTarget { return colouredBalls.values.randomElement() }
             for t in [BallType.black, .pink, .blue, .brown, .green, .yellow] {
                 if let node = colouredBalls[t] { return node }
             }
@@ -1401,26 +1466,6 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             let required = clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
             return colouredBalls[required]
         }
-    }
-
-    /// Returns true when at least one pocket has a clear cue-ball path through the target.
-    private func hasAnyClearShot(cuePos: CGPoint, target: SKShapeNode, obstacles: [CGPoint]) -> Bool {
-        for pocket in aiPocketPositions() {
-            let tdx = target.position.x - pocket.x
-            let tdy = target.position.y - pocket.y
-            let td  = hypot(tdx, tdy)
-            guard td > 0 else { continue }
-            let contact = CGPoint(
-                x: target.position.x + (tdx / td) * ballRadius * 2,
-                y: target.position.y + (tdy / td) * ballRadius * 2
-            )
-            // Exclude the target itself from obstacle list for this check
-            let obs = obstacles.filter {
-                hypot($0.x - target.position.x, $0.y - target.position.y) > ballRadius
-            }
-            if isCuePath(from: cuePos, to: contact, clearOf: obs) { return true }
-        }
-        return false
     }
 
     /// Returns true when the cue ball can travel from `from` to `to` without
