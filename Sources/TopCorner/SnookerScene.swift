@@ -82,7 +82,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // Layout
     private let tableRect    = CGRect(x: 8, y: 8, width: 656, height: 364)
     private let ballRadius:  CGFloat = 10
-    private let pocketRadius: CGFloat = 15
+    private let cornerPocketRadius: CGFloat = 17
+    private let middlePocketRadius: CGFloat = 13
 
     // Nodes
     private var cueBall: SKShapeNode!
@@ -213,22 +214,23 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private func setupCushions() {
         let t = tableRect
         let thickness: CGFloat = 6
-        let pR = pocketRadius
+        let cR = cornerPocketRadius
+        let mR = middlePocketRadius
 
         // Cushion rects (inset from baize edges, with gaps at pockets)
         let segments: [(CGRect, String)] = [
             // Bottom left half
-            (CGRect(x: t.minX + pR,       y: t.minY,            width: t.width/2 - pR * 1.5, height: thickness), "bot-L"),
+            (CGRect(x: t.minX + cR,       y: t.minY,            width: t.width/2 - cR - mR * 0.5, height: thickness), "bot-L"),
             // Bottom right half
-            (CGRect(x: t.midX + pR * 0.5, y: t.minY,            width: t.width/2 - pR * 1.5, height: thickness), "bot-R"),
+            (CGRect(x: t.midX + mR * 0.5, y: t.minY,            width: t.width/2 - mR * 0.5 - cR, height: thickness), "bot-R"),
             // Top left half
-            (CGRect(x: t.minX + pR,       y: t.maxY - thickness, width: t.width/2 - pR * 1.5, height: thickness), "top-L"),
+            (CGRect(x: t.minX + cR,       y: t.maxY - thickness, width: t.width/2 - cR - mR * 0.5, height: thickness), "top-L"),
             // Top right half
-            (CGRect(x: t.midX + pR * 0.5, y: t.maxY - thickness, width: t.width/2 - pR * 1.5, height: thickness), "top-R"),
+            (CGRect(x: t.midX + mR * 0.5, y: t.maxY - thickness, width: t.width/2 - mR * 0.5 - cR, height: thickness), "top-R"),
             // Left cushion
-            (CGRect(x: t.minX,            y: t.minY + pR,       width: thickness, height: t.height - pR * 2), "left"),
+            (CGRect(x: t.minX,            y: t.minY + cR,        width: thickness, height: t.height - cR * 2), "left"),
             // Right cushion
-            (CGRect(x: t.maxX - thickness, y: t.minY + pR,      width: thickness, height: t.height - pR * 2), "right"),
+            (CGRect(x: t.maxX - thickness, y: t.minY + cR,       width: thickness, height: t.height - cR * 2), "right"),
         ]
 
         for (rect, _) in segments {
@@ -253,17 +255,16 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     private func setupPockets() {
         let t = tableRect
-        let pR = pocketRadius
-        let positions: [CGPoint] = [
-            CGPoint(x: t.minX,  y: t.minY),   // bottom-left
-            CGPoint(x: t.midX,  y: t.minY),   // bottom-mid
-            CGPoint(x: t.maxX,  y: t.minY),   // bottom-right
-            CGPoint(x: t.minX,  y: t.maxY),   // top-left
-            CGPoint(x: t.midX,  y: t.maxY),   // top-mid
-            CGPoint(x: t.maxX,  y: t.maxY),   // top-right
+        let positions: [(CGPoint, CGFloat)] = [
+            (CGPoint(x: t.minX,  y: t.minY), cornerPocketRadius),   // bottom-left
+            (CGPoint(x: t.midX,  y: t.minY), middlePocketRadius),   // bottom-mid
+            (CGPoint(x: t.maxX,  y: t.minY), cornerPocketRadius),   // bottom-right
+            (CGPoint(x: t.minX,  y: t.maxY), cornerPocketRadius),   // top-left
+            (CGPoint(x: t.midX,  y: t.maxY), middlePocketRadius),   // top-mid
+            (CGPoint(x: t.maxX,  y: t.maxY), cornerPocketRadius),   // top-right
         ]
 
-        for pos in positions {
+        for (pos, pR) in positions {
             let pocket = SKShapeNode(circleOfRadius: pR)
             pocket.position    = pos
             pocket.fillColor   = NSColor(red: 0.04, green: 0.04, blue: 0.04, alpha: 1)
