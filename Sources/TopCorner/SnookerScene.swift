@@ -41,6 +41,32 @@ enum BallType: Int, CaseIterable {
     }
 }
 
+// MARK: - AI Difficulty
+
+private enum AIDifficulty: Int, CaseIterable {
+    case easy, medium, hard
+
+    /// Max random angular error in radians applied to each AI shot.
+    var angleError: CGFloat {
+        switch self {
+        case .easy:   return 0.20
+        case .medium: return 0.09
+        case .hard:   return 0.02
+        }
+    }
+
+    /// Whether the AI picks a random valid target rather than the optimal one.
+    var usesRandomTarget: Bool { self == .easy }
+
+    var label: String {
+        switch self {
+        case .easy:   return "Easy"
+        case .medium: return "Med"
+        case .hard:   return "Hard"
+        }
+    }
+}
+
 // MARK: - Game State
 
 private enum TurnPhase {
@@ -88,6 +114,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var firstBallHit: BallType? = nil
     private var cueBallPottedThisShot  = false
     private var needsCueBallRespawn    = false
+    private var lastFoulPenalty        = 0   // kept for display after foulPenalty is reset
     // Snapshot of game state at the moment the cue ball is struck — used in
     // endOfShot() so that mid-shot phase changes don't affect foul evaluation.
     private var shotPhase:          TurnPhase = .needRed
@@ -96,6 +123,10 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // Power
     private var powerMultiplier: CGFloat = 3   // 1–5, user-adjustable
     private var powerPips: [SKShapeNode] = []
+
+    // AI difficulty
+    private var aiDifficulty: AIDifficulty = .medium
+    private var diffButtons:  [AIDifficulty: SKShapeNode] = [:]
 
     // UI
     private var score1Label:      SKLabelNode!
@@ -503,8 +534,39 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         addSideSeparator(y: 104)
 
+        // ── AI LEVEL section ──────────────────────────────────────────
+        addSideHeader("AI LEVEL", y: 93)
+
+        // Three equal-width buttons: Easy / Med / Hard
+        let diffData: [(AIDifficulty, String, CGFloat)] = [
+            (.easy,   "Easy", sideInL),
+            (.medium, "Med",  sideInL + 45),
+            (.hard,   "Hard", sideInL + 90),
+        ]
+        for (diff, title, bx) in diffData {
+            let bg = SKShapeNode(rect: CGRect(x: bx, y: 72, width: 40, height: 18), cornerRadius: 3)
+            bg.lineWidth   = 0.5
+            bg.zPosition   = 10
+            bg.name        = "diff_\(diff.rawValue)"
+            addChild(bg)
+            diffButtons[diff] = bg
+
+            let lbl = SKLabelNode(text: title)
+            lbl.fontName  = "Helvetica Neue"
+            lbl.fontSize  = 10
+            lbl.fontColor = .white
+            lbl.position  = CGPoint(x: bx + 20, y: 77)
+            lbl.horizontalAlignmentMode = .center
+            lbl.zPosition = 11
+            lbl.name      = "diff_\(diff.rawValue)"
+            addChild(lbl)
+        }
+        updateDifficultyButtons()
+
+        addSideSeparator(y: 68)
+
         // ── RESET button ──────────────────────────────────────────────
-        let resetBg = SKShapeNode(rect: CGRect(x: sideInL, y: 66, width: sideW, height: 30), cornerRadius: 5)
+        let resetBg = SKShapeNode(rect: CGRect(x: sideInL, y: 40, width: sideW, height: 24), cornerRadius: 5)
         resetBg.fillColor   = NSColor(white: 0.25, alpha: 1)
         resetBg.strokeColor = NSColor(white: 0.42, alpha: 1)
         resetBg.lineWidth   = 0.5
@@ -515,14 +577,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         resetLbl.fontName   = "Helvetica Neue"
         resetLbl.fontSize   = 12
         resetLbl.fontColor  = .white
-        resetLbl.position   = CGPoint(x: sideCX, y: 74)
+        resetLbl.position   = CGPoint(x: sideCX, y: 47)
         resetLbl.horizontalAlignmentMode = .center
         resetLbl.zPosition  = 11
         resetLbl.name       = "resetBtn"
         addChild(resetLbl)
 
         // ── QUIT button ───────────────────────────────────────────────
-        let quitBg = SKShapeNode(rect: CGRect(x: sideInL, y: 26, width: sideW, height: 30), cornerRadius: 5)
+        let quitBg = SKShapeNode(rect: CGRect(x: sideInL, y: 10, width: sideW, height: 24), cornerRadius: 5)
         quitBg.fillColor   = NSColor(red: 0.45, green: 0.08, blue: 0.08, alpha: 1)
         quitBg.strokeColor = NSColor(red: 0.65, green: 0.18, blue: 0.18, alpha: 1)
         quitBg.lineWidth   = 0.5
@@ -533,7 +595,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         quitLbl.fontName   = "Helvetica Neue"
         quitLbl.fontSize   = 12
         quitLbl.fontColor  = .white
-        quitLbl.position   = CGPoint(x: sideCX, y: 34)
+        quitLbl.position   = CGPoint(x: sideCX, y: 17)
         quitLbl.horizontalAlignmentMode = .center
         quitLbl.zPosition  = 11
         quitLbl.name       = "quitBtn"
@@ -563,6 +625,16 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         sep.lineWidth   = 0.5
         sep.zPosition   = 10
         addChild(sep)
+    }
+
+    private func updateDifficultyButtons() {
+        let activeStroke = NSColor(red: 0.30, green: 0.75, blue: 1.0, alpha: 1)
+        for (diff, node) in diffButtons {
+            let selected = diff == aiDifficulty
+            node.fillColor   = selected ? NSColor(red: 0.10, green: 0.35, blue: 0.55, alpha: 1)
+                                        : NSColor(white: 0.22, alpha: 1)
+            node.strokeColor = selected ? activeStroke : NSColor(white: 0.38, alpha: 1)
+        }
     }
 
     private func updatePowerPips() {
@@ -606,7 +678,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         }
 
         if foulFlag {
-            messageLabel.text = "FOUL! +\(foulPenalty) to P\(currentPlayer == 0 ? 2 : 1)"
+            messageLabel.text = "FOUL! +\(lastFoulPenalty) to P\(currentPlayer == 0 ? 2 : 1)"
             messageLabel.fontColor = NSColor.orange
         } else {
             messageLabel.text = ""
@@ -623,6 +695,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         if tapped.name == "quitBtn"  { NSApp.terminate(nil); return }
         if tapped.name == "pwrMinus" { adjustPower(-1); return }
         if tapped.name == "pwrPlus"  { adjustPower(+1); return }
+        if let name = tapped.name, name.hasPrefix("diff_"),
+           let raw = Int(name.dropFirst(5)),
+           let diff = AIDifficulty(rawValue: raw) {
+            aiDifficulty = diff
+            gLog("AI difficulty set to \(diff.label)")
+            updateDifficultyButtons()
+            return
+        }
 
         // Cue ball placement mode
         if isPlacingCueBall {
@@ -1026,6 +1106,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         // Clean pot → same player continues
 
         let wasCueBallPotted  = cueBallPottedThisShot
+        if foulThisShot { lastFoulPenalty = foulPenalty }
         pottedThisShot        = false
         foulThisShot          = false
         foulPenalty           = 0
@@ -1111,6 +1192,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         firstBallHit          = nil
         cueBallPottedThisShot = false
         needsCueBallRespawn   = false
+        lastFoulPenalty       = 0
         clearanceIndex = 0
         redsOnTable    = 0
 
@@ -1198,8 +1280,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             }
         }
 
-        // Add a small random angular error so the AI isn't perfect
-        let error = CGFloat.random(in: -0.09...0.09)
+        // Add random angular error scaled to difficulty
+        let maxErr = aiDifficulty.angleError
+        let error  = CGFloat.random(in: -maxErr...maxErr)
         let angle = atan2(bestDir.dy, bestDir.dx) + error
         let force: CGFloat = 120 * powerMultiplier
         let impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
@@ -1222,14 +1305,22 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let cuePos = cueBall?.position ?? tableRect.center
         switch phase {
         case .needRed:
-            // Nearest red ball
-            return balls
-                .filter { $0.value == .red }
-                .min { hypot($0.key.position.x - cuePos.x, $0.key.position.y - cuePos.y) <
-                       hypot($1.key.position.x - cuePos.x, $1.key.position.y - cuePos.y) }?
-                .key
+            let reds = balls.filter { $0.value == .red }.map { $0.key }
+            guard !reds.isEmpty else { return nil }
+            if aiDifficulty.usesRandomTarget {
+                return reds.randomElement()
+            }
+            // Medium/Hard: nearest red
+            return reds.min {
+                hypot($0.position.x - cuePos.x, $0.position.y - cuePos.y) <
+                hypot($1.position.x - cuePos.x, $1.position.y - cuePos.y)
+            }
         case .needColour:
-            // Prefer highest-value colour still on the table
+            if aiDifficulty.usesRandomTarget {
+                // Easy: pick any available colour at random
+                return colouredBalls.values.randomElement()
+            }
+            // Medium/Hard: highest value colour
             for t in [BallType.black, .pink, .blue, .brown, .green, .yellow] {
                 if let node = colouredBalls[t] { return node }
             }
