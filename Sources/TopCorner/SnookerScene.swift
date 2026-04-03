@@ -475,14 +475,11 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         addSideSeparator(y: 322)
 
-        // ── NEXT BALL section — inline circle + label ─────────────────
-        // y=278..322 (44px). Content height ≈28px → 8px padding top+bottom.
-        // header_top=314→baseline=307; circle cy=295; label y=291 (left of circle)
-        // Horizontally: unit (18px circle + 5px gap + ~40px text) centred around sideCX
-        addSideHeader("NEXT BALL", y: 307)
-
+        // ── NEXT BALL section — inline circle + label (no heading) ──────
+        // y=278..322 (44px). Only the row: circle r=9 centred vertically → cy=300.
+        // Circle pinned to left edge; label right-aligned so long text grows leftward
         nextBallIndicator = SKShapeNode(circleOfRadius: 9)
-        nextBallIndicator.position    = CGPoint(x: sideCX - 22, y: 295)
+        nextBallIndicator.position    = CGPoint(x: sideInL + 11, y: 300)
         nextBallIndicator.strokeColor = NSColor.white.withAlphaComponent(0.35)
         nextBallIndicator.lineWidth   = 1
         nextBallIndicator.zPosition   = 10
@@ -491,8 +488,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         nextBallLabel = SKLabelNode(fontNamed: "Helvetica Neue")
         nextBallLabel.fontSize  = 11
         nextBallLabel.fontColor = NSColor(white: 0.75, alpha: 1)
-        nextBallLabel.position  = CGPoint(x: sideCX - 8, y: 291)
-        nextBallLabel.horizontalAlignmentMode = .left
+        nextBallLabel.position  = CGPoint(x: sideInR, y: 300)
+        nextBallLabel.horizontalAlignmentMode = .right
+        nextBallLabel.verticalAlignmentMode   = .center
         nextBallLabel.zPosition = 10
         addChild(nextBallLabel)
 
@@ -596,8 +594,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             lbl.fontName  = "Helvetica Neue"
             lbl.fontSize  = 10
             lbl.fontColor = .white
-            lbl.position  = CGPoint(x: bx + 20, y: 147)
+            lbl.position  = CGPoint(x: bx + 20, y: 149)  // rect centre: 141+8
             lbl.horizontalAlignmentMode = .center
+            lbl.verticalAlignmentMode   = .center
             lbl.zPosition = 11
             lbl.name      = "diff_\(diff.rawValue)"
             addChild(lbl)
@@ -615,8 +614,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         oddsLbl.fontName  = "Helvetica Neue"
         oddsLbl.fontSize  = 10
         oddsLbl.fontColor = .white
-        oddsLbl.position  = CGPoint(x: sideCX, y: 123)
+        oddsLbl.position  = CGPoint(x: sideCX, y: 125)  // rect centre: 117+8
         oddsLbl.horizontalAlignmentMode = .center
+        oddsLbl.verticalAlignmentMode   = .center
         oddsLbl.zPosition = 11
         oddsLbl.name      = "oddsToggle"
         addChild(oddsLbl)
