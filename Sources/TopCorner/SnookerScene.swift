@@ -86,7 +86,12 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var foulThisShot         = false
     private var foulPenalty          = 0
     private var firstBallHit: BallType? = nil
-    private var cueBallPottedThisShot = false
+    private var cueBallPottedThisShot  = false
+    private var needsCueBallRespawn    = false
+    // Snapshot of game state at the moment the cue ball is struck — used in
+    // endOfShot() so that mid-shot phase changes don't affect foul evaluation.
+    private var shotPhase:          TurnPhase = .needRed
+    private var shotClearanceIndex: Int       = 0
 
     // Power
     private var powerMultiplier: CGFloat = 3   // 1–5, user-adjustable
@@ -110,6 +115,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // MARK: Scene lifecycle
 
     override func didMove(to view: SKView) {
+        gLog("Scene loaded — size \(Int(size.width))×\(Int(size.height))")
         backgroundColor = NSColor(red: 0.12, green: 0.18, blue: 0.12, alpha: 1)
         physicsWorld.gravity   = .zero
         physicsWorld.contactDelegate = self
@@ -242,6 +248,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // MARK: Balls
 
     private func spawnBalls() {
+        gLog("Spawning balls — new rack")
         balls.removeAll()
         colouredBalls.removeAll()
         redsOnTable = 0
@@ -270,6 +277,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         cueBall = makeBall(type: .cue, at: cueBallPos)
         enterCueBallPlacement()
 
+        gLog("Spawned \(redsOnTable) reds + \(colouredBalls.count) colours. Cue ball entering placement.")
         // 15 reds in triangle
         spawnRedTriangle()
     }
@@ -323,6 +331,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     // MARK: UI
+
+    private let aiActionKey = "ai_shot"
 
     // Sidebar geometry constants
     // Scene: 820×380. Table occupies x=8..664, y=8..372.
@@ -678,6 +688,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let impulse = CGVector(dx: (dx / dist) * scale, dy: (dy / dist) * scale)
         cue.physicsBody?.applyImpulse(impulse)
 
+        gLog("P\(currentPlayer + 1) shot — power \(Int(powerMultiplier)), drag \(Int(dist))px, impulse (dx:\(String(format:"%.1f", impulse.dx)) dy:\(String(format:"%.1f", impulse.dy))), phase: \(phase)")
+
         waitingForStop        = true
         ballsWereMoving       = false
         pottedThisShot        = false
@@ -685,10 +697,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         foulPenalty           = 0
         firstBallHit          = nil
         cueBallPottedThisShot = false
+        shotPhase             = phase
+        shotClearanceIndex    = clearanceIndex
     }
 
     private func adjustPower(_ delta: CGFloat) {
         powerMultiplier = max(1, min(5, powerMultiplier + delta))
+        gLog("Power adjusted to \(Int(powerMultiplier))", .debug)
         updatePowerPips()
     }
 
@@ -745,6 +760,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
                 let other = (isCueA ? nodeB : nodeA) as? SKShapeNode
                 if let other, let type = balls[other] {
                     firstBallHit = type
+                    gLog("Cue ball first contact: \(type) (phase: \(phase), required: \(requiredBallDescription()))")
                 }
             }
         }
@@ -761,13 +777,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         node.removeFromParent()
 
         if type == .cue {
-            // Cue ball potted — foul
+            // Cue ball potted — foul. Don't respawn yet; endOfShot() will do it
+            // after the turn has been correctly switched to the opponent.
             cueBallPottedThisShot = true
-            recordFoul(penalty: cueBallFoulPenalty())
-            run(SKAction.sequence([
-                SKAction.wait(forDuration: 0.8),
-                SKAction.run { [weak self] in self?.respawnCueBall() }
-            ]))
+            needsCueBallRespawn   = true
+            let pen = cueBallFoulPenalty()
+            gLog("FOUL — cue ball potted (penalty \(pen))", .warning)
+            recordFoul(penalty: pen)
             updateUI()
             return
         }
@@ -779,9 +795,11 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
                 scores[currentPlayer] += type.points
                 pottedThisShot = true
                 phase = .needColour
+                gLog("P\(currentPlayer + 1) potted red (+\(type.points)pt) — score now \(scores[currentPlayer]), reds remaining: \(redsOnTable), phase → needColour")
             } else {
-                // Foul — colour when red required
-                recordFoul(penalty: max(4, type.points))
+                let pen = max(4, type.points)
+                gLog("FOUL — potted \(type) (\(type.points)pt) when red required — penalty \(pen), \(type) respawned", .warning)
+                recordFoul(penalty: pen)
                 respawnColour(type)
             }
 
@@ -789,17 +807,21 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             if type != .red {
                 scores[currentPlayer] += type.points
                 pottedThisShot = true
+                let nextPhase: TurnPhase = redsOnTable > 0 ? .needRed : .redsAllGone
+                gLog("P\(currentPlayer + 1) potted \(type) (+\(type.points)pt) — score now \(scores[currentPlayer]), reds remaining: \(redsOnTable), phase → \(nextPhase)")
                 if redsOnTable > 0 {
                     respawnColour(type)
                 }
-                phase = redsOnTable > 0 ? .needRed : .redsAllGone
+                phase = nextPhase
             } else if pottedThisShot {
                 // Extra red potted in the same shot as a previous red — legal,
                 // scores 1pt each; player still owes one colour (phase stays needColour)
                 redsOnTable -= 1
                 scores[currentPlayer] += type.points
+                gLog("P\(currentPlayer + 1) potted extra red in same shot (+\(type.points)pt, legal) — score now \(scores[currentPlayer]), reds remaining: \(redsOnTable)")
             } else {
                 // Foul — red potted on a shot where colour was required
+                gLog("FOUL — potted red when colour required — penalty 4, red removed", .warning)
                 recordFoul(penalty: 4)
                 redsOnTable -= 1
             }
@@ -810,12 +832,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
                 scores[currentPlayer] += type.points
                 pottedThisShot = true
                 clearanceIndex += 1
+                gLog("P\(currentPlayer + 1) potted \(type) in clearance (+\(type.points)pt) — score now \(scores[currentPlayer]), clearance index: \(clearanceIndex)/\(clearanceOrder.count)")
                 if clearanceIndex >= clearanceOrder.count {
                     showWin()
                 }
             } else {
-                // Foul — wrong colour in clearance
-                recordFoul(penalty: max(4, type.points))
+                let pen = max(4, type.points)
+                gLog("FOUL — potted \(type) in clearance but required \(required) — penalty \(pen), \(type) respawned", .warning)
+                recordFoul(penalty: pen)
                 respawnColour(type)
             }
         }
@@ -824,17 +848,23 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func recordFoul(penalty: Int) {
+        let previous = foulPenalty
         foulFlag     = true
         foulThisShot = true
         foulPenalty  = max(foulPenalty, penalty)   // keep the highest if multiple fouls
+        if foulPenalty > previous {
+            gLog("Foul recorded — penalty raised to \(foulPenalty) (was \(previous))", .warning)
+        }
     }
 
-    private func cueBallFoulPenalty() -> Int {
-        switch phase {
+    private func cueBallFoulPenalty(for phase: TurnPhase? = nil, clearanceIndex idx: Int? = nil) -> Int {
+        let p = phase ?? self.phase
+        let i = idx   ?? self.clearanceIndex
+        switch p {
         case .needRed:    return 4
         case .needColour: return 4
         case .redsAllGone:
-            let on = clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
+            let on = clearanceOrder[min(i, clearanceOrder.count - 1)]
             return max(4, on.points)
         }
     }
@@ -847,6 +877,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func enterCueBallPlacement() {
+        gLog("Cue ball placement entered — P\(currentPlayer + 1) placing in D")
         isPlacingCueBall = true
         // Ghost the ball — remove from physics category system entirely while positioning
         cueBall.physicsBody?.isDynamic          = false
@@ -854,7 +885,18 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         cueBall.physicsBody?.collisionBitMask   = 0
         cueBall.physicsBody?.contactTestBitMask = 0
 
-        // Highlight the D area
+        // AI: auto-place without showing the D UI
+        if currentPlayer == 1 {
+            messageLabel.text      = "P2 placing…"
+            messageLabel.fontColor = NSColor(white: 0.60, alpha: 1)
+            run(SKAction.sequence([
+                SKAction.wait(forDuration: 0.6),
+                SKAction.run { [weak self] in self?.aiPlaceCueBall() }
+            ]), withKey: aiActionKey)
+            return
+        }
+
+        // Human P1: highlight the D area
         let t = tableRect
         let baulkX = t.minX + t.width * 0.22
         let dRadius = t.width * 0.083
@@ -879,6 +921,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func exitCueBallPlacement() {
+        gLog("Cue ball placement done — placed at (\(String(format:"%.1f", cueBall.position.x)), \(String(format:"%.1f", cueBall.position.y)))")
         isPlacingCueBall    = false
         isDraggingPlacement = false
         cueBall.physicsBody?.isDynamic          = true
@@ -953,12 +996,15 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         // Check "fail to hit nominated ball" — skip if cue ball was already potted (covered separately)
         if !cueBallPottedThisShot {
             if let hit = firstBallHit {
-                if !isCorrectFirstBall(hit) {
-                    recordFoul(penalty: cueBallFoulPenalty())
+                if !isCorrectFirstBall(hit, phase: shotPhase, clearanceIndex: shotClearanceIndex) {
+                    let pen = cueBallFoulPenalty(for: shotPhase, clearanceIndex: shotClearanceIndex)
+                    gLog("FOUL — first ball hit was \(hit) but required \(requiredBallDescription(phase: shotPhase, clearanceIndex: shotClearanceIndex)) — penalty \(pen)", .warning)
+                    recordFoul(penalty: pen)
                 }
             } else {
-                // Cue ball hit nothing at all — foul
-                recordFoul(penalty: cueBallFoulPenalty())
+                let pen = cueBallFoulPenalty(for: shotPhase, clearanceIndex: shotClearanceIndex)
+                gLog("FOUL — cue ball hit nothing (required \(requiredBallDescription(phase: shotPhase, clearanceIndex: shotClearanceIndex))) — penalty \(pen)", .warning)
+                recordFoul(penalty: pen)
             }
         }
 
@@ -966,30 +1012,60 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             // Award penalty to opponent and hand over turn
             let opponent = 1 - currentPlayer
             scores[opponent] += foulPenalty
+            gLog("Turn end — FOUL: P\(opponent + 1) awarded \(foulPenalty)pt (score now \(scores[opponent])). Turn passes to P\(opponent + 1)")
             currentPlayer = opponent
         } else if !pottedThisShot {
             // Clean miss — switch player, clear foul display
-            currentPlayer = 1 - currentPlayer
+            let next = 1 - currentPlayer
+            gLog("Turn end — clean miss. Turn passes to P\(next + 1)")
+            currentPlayer = next
             foulFlag = false
+        } else {
+            gLog("Turn end — pot(s) scored. P\(currentPlayer + 1) continues (score: \(scores[currentPlayer]))")
         }
         // Clean pot → same player continues
 
+        let wasCueBallPotted  = cueBallPottedThisShot
         pottedThisShot        = false
         foulThisShot          = false
         foulPenalty           = 0
         firstBallHit          = nil
         cueBallPottedThisShot = false
         updateUI()
+
+        if wasCueBallPotted {
+            // Respawn now — turn has already been switched to the correct player above.
+            gLog("Respawning cue ball for P\(currentPlayer + 1) after foul")
+            run(SKAction.sequence([
+                SKAction.wait(forDuration: 0.4),
+                SKAction.run { [weak self] in self?.respawnCueBall() }
+            ]))
+        } else if currentPlayer == 1 {
+            scheduleAIShot()
+        }
     }
 
-    private func isCorrectFirstBall(_ type: BallType) -> Bool {
-        switch phase {
+    private func requiredBallDescription(phase p: TurnPhase? = nil, clearanceIndex idx: Int? = nil) -> String {
+        let p = p ?? phase
+        let i = idx ?? clearanceIndex
+        switch p {
+        case .needRed:    return "red"
+        case .needColour: return "any colour"
+        case .redsAllGone:
+            return "\(clearanceOrder[min(i, clearanceOrder.count - 1)])"
+        }
+    }
+
+    private func isCorrectFirstBall(_ type: BallType, phase p: TurnPhase? = nil, clearanceIndex idx: Int? = nil) -> Bool {
+        let p = p ?? phase
+        let i = idx ?? clearanceIndex
+        switch p {
         case .needRed:
             return type == .red
         case .needColour:
-            return type != .red   // any colour is valid (player's choice)
+            return type != .red
         case .redsAllGone:
-            return type == clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
+            return type == clearanceOrder[min(i, clearanceOrder.count - 1)]
         }
     }
 
@@ -1005,11 +1081,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     private func showWin() {
         let winner = scores[0] > scores[1] ? "P1" : (scores[1] > scores[0] ? "P2" : "Draw")
+        gLog("FRAME OVER — \(winner) wins. Final scores: P1=\(scores[0]) P2=\(scores[1])")
         messageLabel.text = "Frame over! \(winner) wins"
         messageLabel.fontColor = NSColor(red: 0.3, green: 1.0, blue: 0.4, alpha: 1)
     }
 
     private func resetGame() {
+        gLog("New game — resetting. Final scores before reset: P1=\(scores[0]) P2=\(scores[1])")
+        removeAction(forKey: aiActionKey)
         for (node, _) in balls { node.removeFromParent() }
         balls.removeAll()
         colouredBalls.removeAll()
@@ -1031,6 +1110,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         foulPenalty           = 0
         firstBallHit          = nil
         cueBallPottedThisShot = false
+        needsCueBallRespawn   = false
         clearanceIndex = 0
         redsOnTable    = 0
 
@@ -1039,4 +1119,142 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         messageLabel.text = ""
         messageLabel.fontColor = NSColor.yellow
     }
+
+    // MARK: AI Player
+
+    private func aiPlaceCueBall() {
+        let t = tableRect
+        let baulkX  = t.minX + t.width * 0.22
+        let dCenter = CGPoint(x: baulkX, y: t.midY)
+        let dRadius = t.width * 0.083
+
+        // Try D-centre then sweep around the semicircle for a free spot
+        var placed = dCenter
+        if overlapsAnyBall(placed) {
+            var found = false
+            let steps = 16
+            for i in 0..<steps {
+                let angle = Double(i) * Double.pi / Double(steps)
+                let candidate = CGPoint(
+                    x: dCenter.x - CGFloat(cos(angle)) * dRadius * 0.8,
+                    y: dCenter.y + CGFloat(sin(angle)) * dRadius * 0.8
+                )
+                if !overlapsAnyBall(candidate) {
+                    placed = candidate
+                    found  = true
+                    break
+                }
+            }
+            if !found { placed = dCenter }
+        }
+        gLog("AI placing cue ball at (\(String(format:"%.1f", placed.x)), \(String(format:"%.1f", placed.y)))")
+        cueBall.position = placed
+        exitCueBallPlacement()
+        scheduleAIShot()
+    }
+
+    private func scheduleAIShot() {
+        guard currentPlayer == 1 else { return }
+        gLog("AI shot scheduled in 1.0s (phase: \(phase))")
+        run(SKAction.sequence([
+            SKAction.wait(forDuration: 1.0),
+            SKAction.run { [weak self] in self?.performAIShot() }
+        ]), withKey: aiActionKey)
+    }
+
+    private func performAIShot() {
+        guard let cue = cueBall, currentPlayer == 1, !isPlacingCueBall else { return }
+        guard let target = findAITarget() else { return }
+
+        let pockets = aiPocketPositions()
+
+        // Ghost-ball: for each pocket find the contact point that pots the target,
+        // then aim the cue ball at that contact point.  Pick the pocket with the
+        // shortest cue-ball → contact path (simplest shot geometry).
+        var bestDir  = CGVector(dx: 1, dy: 0)
+        var bestCost = CGFloat.infinity
+
+        for pocket in pockets {
+            let tdx = target.position.x - pocket.x
+            let tdy = target.position.y - pocket.y
+            let td  = hypot(tdx, tdy)
+            guard td > 0 else { continue }
+
+            // Ghost contact point: on far side of target, 2r away from its centre
+            let contact = CGPoint(
+                x: target.position.x + (tdx / td) * ballRadius * 2,
+                y: target.position.y + (tdy / td) * ballRadius * 2
+            )
+
+            let cdx = contact.x - cue.position.x
+            let cdy = contact.y - cue.position.y
+            let cd  = hypot(cdx, cdy)
+            guard cd > 0 else { continue }
+
+            // Cost: distance cue must travel to reach contact point
+            if cd < bestCost {
+                bestCost = cd
+                bestDir  = CGVector(dx: cdx / cd, dy: cdy / cd)
+            }
+        }
+
+        // Add a small random angular error so the AI isn't perfect
+        let error = CGFloat.random(in: -0.09...0.09)
+        let angle = atan2(bestDir.dy, bestDir.dx) + error
+        let force: CGFloat = 120 * powerMultiplier
+        let impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
+        let targetType = balls[target] ?? .red
+        gLog("AI shot — target: \(targetType) at (\(String(format:"%.1f", target.position.x)), \(String(format:"%.1f", target.position.y))), angle error: \(String(format:"%.3f", error)) rad, impulse (dx:\(String(format:"%.1f", impulse.dx)) dy:\(String(format:"%.1f", impulse.dy)))")
+        cue.physicsBody?.applyImpulse(impulse)
+
+        waitingForStop        = true
+        ballsWereMoving       = false
+        pottedThisShot        = false
+        foulThisShot          = false
+        foulPenalty           = 0
+        firstBallHit          = nil
+        cueBallPottedThisShot = false
+        shotPhase             = phase
+        shotClearanceIndex    = clearanceIndex
+    }
+
+    private func findAITarget() -> SKShapeNode? {
+        let cuePos = cueBall?.position ?? tableRect.center
+        switch phase {
+        case .needRed:
+            // Nearest red ball
+            return balls
+                .filter { $0.value == .red }
+                .min { hypot($0.key.position.x - cuePos.x, $0.key.position.y - cuePos.y) <
+                       hypot($1.key.position.x - cuePos.x, $1.key.position.y - cuePos.y) }?
+                .key
+        case .needColour:
+            // Prefer highest-value colour still on the table
+            for t in [BallType.black, .pink, .blue, .brown, .green, .yellow] {
+                if let node = colouredBalls[t] { return node }
+            }
+            return nil
+        case .redsAllGone:
+            let required = clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
+            return colouredBalls[required]
+        }
+    }
+
+    private func aiPocketPositions() -> [CGPoint] {
+        let t = tableRect
+        return [
+            CGPoint(x: t.minX, y: t.minY),
+            CGPoint(x: t.midX, y: t.minY),
+            CGPoint(x: t.maxX, y: t.minY),
+            CGPoint(x: t.minX, y: t.maxY),
+            CGPoint(x: t.midX, y: t.maxY),
+            CGPoint(x: t.maxX, y: t.maxY),
+        ]
+    }
+}
+
+// MARK: - CGRect helper
+
+private extension CGRect {
+    var center: CGPoint { CGPoint(x: midX, y: midY) }
 }
