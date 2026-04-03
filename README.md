@@ -2,6 +2,8 @@
 
 > *Nobody has to know.*
 
+![](assets/intro.png)
+
 A snooker game that lives in your macOS menu bar. Built with SpriteKit, no Xcode project required.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
