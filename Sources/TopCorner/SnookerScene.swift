@@ -128,6 +128,12 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var aiDifficulty: AIDifficulty = .medium
     private var diffButtons:  [AIDifficulty: SKShapeNode] = [:]
 
+    // Probability overlay
+    private var showOdds:            Bool       = false
+    private var oddsToggleNode:      SKShapeNode?
+    private var oddsToggleLabel:     SKLabelNode?
+    private var probabilityOverlays: [SKNode]   = []
+
     // UI
     private var score1Label:      SKLabelNode!
     private var score2Label:      SKLabelNode!
@@ -370,6 +376,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private enum PrefKey {
         static let power      = "tc_powerMultiplier"
         static let difficulty = "tc_aiDifficulty"
+        static let showOdds   = "tc_showOdds"
     }
 
     private func loadSettings() {
@@ -381,12 +388,16 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
            let diff = AIDifficulty(rawValue: defaults.integer(forKey: PrefKey.difficulty)) {
             aiDifficulty = diff
         }
-        gLog("Settings loaded — power: \(Int(powerMultiplier)), difficulty: \(aiDifficulty.label)", .debug)
+        if defaults.object(forKey: PrefKey.showOdds) != nil {
+            showOdds = defaults.bool(forKey: PrefKey.showOdds)
+        }
+        gLog("Settings loaded — power: \(Int(powerMultiplier)), difficulty: \(aiDifficulty.label), odds: \(showOdds)", .debug)
     }
 
     private func saveSettings() {
         UserDefaults.standard.set(Double(powerMultiplier), forKey: PrefKey.power)
         UserDefaults.standard.set(aiDifficulty.rawValue,  forKey: PrefKey.difficulty)
+        UserDefaults.standard.set(showOdds,               forKey: PrefKey.showOdds)
     }
 
     // Sidebar geometry constants
@@ -559,16 +570,15 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         addSideSeparator(y: 104)
 
         // ── AI LEVEL section ──────────────────────────────────────────
-        addSideHeader("AI LEVEL", y: 93)
+        addSideHeader("AI LEVEL", y: 95)
 
-        // Three equal-width buttons: Easy / Med / Hard
         let diffData: [(AIDifficulty, String, CGFloat)] = [
             (.easy,   "Easy", sideInL),
             (.medium, "Med",  sideInL + 45),
             (.hard,   "Hard", sideInL + 90),
         ]
         for (diff, title, bx) in diffData {
-            let bg = SKShapeNode(rect: CGRect(x: bx, y: 72, width: 40, height: 18), cornerRadius: 3)
+            let bg = SKShapeNode(rect: CGRect(x: bx, y: 76, width: 40, height: 16), cornerRadius: 3)
             bg.lineWidth   = 0.5
             bg.zPosition   = 10
             bg.name        = "diff_\(diff.rawValue)"
@@ -579,7 +589,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             lbl.fontName  = "Helvetica Neue"
             lbl.fontSize  = 10
             lbl.fontColor = .white
-            lbl.position  = CGPoint(x: bx + 20, y: 77)
+            lbl.position  = CGPoint(x: bx + 20, y: 80)
             lbl.horizontalAlignmentMode = .center
             lbl.zPosition = 11
             lbl.name      = "diff_\(diff.rawValue)"
@@ -587,10 +597,30 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         }
         updateDifficultyButtons()
 
-        addSideSeparator(y: 68)
+        // ── SHOW ODDS toggle ──────────────────────────────────────────
+        let oddsBg = SKShapeNode(rect: CGRect(x: sideInL, y: 58, width: sideW, height: 14), cornerRadius: 3)
+        oddsBg.lineWidth   = 0.5
+        oddsBg.zPosition   = 10
+        oddsBg.name        = "oddsToggle"
+        addChild(oddsBg)
+        oddsToggleNode = oddsBg
+
+        let oddsLbl = SKLabelNode(text: "")
+        oddsLbl.fontName  = "Helvetica Neue"
+        oddsLbl.fontSize  = 9
+        oddsLbl.fontColor = .white
+        oddsLbl.position  = CGPoint(x: sideCX, y: 62)
+        oddsLbl.horizontalAlignmentMode = .center
+        oddsLbl.zPosition = 11
+        oddsLbl.name      = "oddsToggle"
+        addChild(oddsLbl)
+        oddsToggleLabel = oddsLbl
+        updateOddsToggle()
+
+        addSideSeparator(y: 54)
 
         // ── RESET button ──────────────────────────────────────────────
-        let resetBg = SKShapeNode(rect: CGRect(x: sideInL, y: 40, width: sideW, height: 24), cornerRadius: 5)
+        let resetBg = SKShapeNode(rect: CGRect(x: sideInL, y: 28, width: sideW, height: 22), cornerRadius: 5)
         resetBg.fillColor   = NSColor(white: 0.25, alpha: 1)
         resetBg.strokeColor = NSColor(white: 0.42, alpha: 1)
         resetBg.lineWidth   = 0.5
@@ -599,16 +629,16 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         addChild(resetBg)
         let resetLbl = SKLabelNode(text: "New Game")
         resetLbl.fontName   = "Helvetica Neue"
-        resetLbl.fontSize   = 12
+        resetLbl.fontSize   = 11
         resetLbl.fontColor  = .white
-        resetLbl.position   = CGPoint(x: sideCX, y: 47)
+        resetLbl.position   = CGPoint(x: sideCX, y: 34)
         resetLbl.horizontalAlignmentMode = .center
         resetLbl.zPosition  = 11
         resetLbl.name       = "resetBtn"
         addChild(resetLbl)
 
         // ── QUIT button ───────────────────────────────────────────────
-        let quitBg = SKShapeNode(rect: CGRect(x: sideInL, y: 10, width: sideW, height: 24), cornerRadius: 5)
+        let quitBg = SKShapeNode(rect: CGRect(x: sideInL, y: 4, width: sideW, height: 22), cornerRadius: 5)
         quitBg.fillColor   = NSColor(red: 0.45, green: 0.08, blue: 0.08, alpha: 1)
         quitBg.strokeColor = NSColor(red: 0.65, green: 0.18, blue: 0.18, alpha: 1)
         quitBg.lineWidth   = 0.5
@@ -617,9 +647,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         addChild(quitBg)
         let quitLbl = SKLabelNode(text: "Quit")
         quitLbl.fontName   = "Helvetica Neue"
-        quitLbl.fontSize   = 12
+        quitLbl.fontSize   = 11
         quitLbl.fontColor  = .white
-        quitLbl.position   = CGPoint(x: sideCX, y: 17)
+        quitLbl.position   = CGPoint(x: sideCX, y: 10)
         quitLbl.horizontalAlignmentMode = .center
         quitLbl.zPosition  = 11
         quitLbl.name       = "quitBtn"
@@ -649,6 +679,16 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         sep.lineWidth   = 0.5
         sep.zPosition   = 10
         addChild(sep)
+    }
+
+    private func updateOddsToggle() {
+        oddsToggleNode?.fillColor   = showOdds
+            ? NSColor(red: 0.10, green: 0.45, blue: 0.20, alpha: 1)
+            : NSColor(white: 0.22, alpha: 1)
+        oddsToggleNode?.strokeColor = showOdds
+            ? NSColor(red: 0.25, green: 0.80, blue: 0.35, alpha: 1)
+            : NSColor(white: 0.38, alpha: 1)
+        oddsToggleLabel?.text = showOdds ? "Odds: ON" : "Odds: OFF"
     }
 
     private func updateDifficultyButtons() {
@@ -708,6 +748,61 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         } else {
             messageLabel.text = ""
         }
+
+        updateProbabilityOverlays()
+    }
+
+    private func updateProbabilityOverlays() {
+        probabilityOverlays.forEach { $0.removeFromParent() }
+        probabilityOverlays.removeAll()
+
+        guard showOdds, let cue = cueBall, !isPlacingCueBall, !waitingForStop else { return }
+
+        let targets   = validAITargets()
+        let pockets   = aiPocketPositions()
+        let allObs    = balls.keys.filter { $0 !== cue }.map { $0.position }
+
+        for (node, _) in targets {
+            let obs = allObs.filter {
+                hypot($0.x - node.position.x, $0.y - node.position.y) > ballRadius * 2
+            }
+            var bestProb: CGFloat = 0
+            for pocket in pockets {
+                let (_, p) = evaluateShot(cuePos: cue.position,
+                                          target: node,
+                                          pocket: pocket,
+                                          obstacles: obs)
+                if p > bestProb { bestProb = p }
+            }
+
+            // Colour: green ≥ 0.35, yellow ≥ 0.12, red below
+            let ringColor: NSColor
+            switch bestProb {
+            case 0.35...: ringColor = NSColor(red: 0.15, green: 0.90, blue: 0.25, alpha: 0.90)
+            case 0.12..<0.35: ringColor = NSColor(red: 0.95, green: 0.80, blue: 0.10, alpha: 0.90)
+            default:      ringColor = NSColor(red: 0.95, green: 0.20, blue: 0.15, alpha: 0.90)
+            }
+
+            let ring = SKShapeNode(circleOfRadius: ballRadius + 3.5)
+            ring.position    = node.position
+            ring.fillColor   = .clear
+            ring.strokeColor = ringColor
+            ring.lineWidth   = 2
+            ring.zPosition   = 7
+            addChild(ring)
+            probabilityOverlays.append(ring)
+
+            let pct = Int(bestProb * 100)
+            let lbl = SKLabelNode(text: "\(pct)%")
+            lbl.fontName  = "Helvetica Neue Bold"
+            lbl.fontSize  = 8
+            lbl.fontColor = ringColor
+            lbl.position  = CGPoint(x: node.position.x, y: node.position.y + ballRadius + 6)
+            lbl.horizontalAlignmentMode = .center
+            lbl.zPosition = 7
+            addChild(lbl)
+            probabilityOverlays.append(lbl)
+        }
     }
 
     // MARK: Input
@@ -726,6 +821,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             aiDifficulty = diff
             gLog("AI difficulty set to \(diff.label)")
             updateDifficultyButtons()
+            saveSettings()
+            return
+        }
+        if tapped.name == "oddsToggle" {
+            showOdds = !showOdds
+            gLog("Probability indicators \(showOdds ? "enabled" : "disabled")")
+            updateOddsToggle()
+            updateProbabilityOverlays()
             saveSettings()
             return
         }
@@ -797,6 +900,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         gLog("P\(currentPlayer + 1) shot — power \(Int(powerMultiplier)), drag \(Int(dist))px, impulse (dx:\(String(format:"%.1f", impulse.dx)) dy:\(String(format:"%.1f", impulse.dy))), phase: \(phase)")
 
         waitingForStop        = true
+        updateProbabilityOverlays()   // hide immediately — balls now in play
         ballsWereMoving       = false
         pottedThisShot        = false
         foulThisShot          = false
@@ -1231,6 +1335,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         cueBallPottedThisShot = false
         needsCueBallRespawn   = false
         lastFoulPenalty       = 0
+        probabilityOverlays.forEach { $0.removeFromParent() }
+        probabilityOverlays.removeAll()
         clearanceIndex = 0
         redsOnTable    = 0
 
@@ -1291,12 +1397,22 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         if aiDifficulty == .hard {
             // Hard mode: evaluate every valid target × every pocket, pick highest probability.
             guard let best = bestHardShot(cue: cue) else { return }
-            let maxErr = aiDifficulty.angleError
-            let error  = CGFloat.random(in: -maxErr...maxErr)
-            let angle  = atan2(best.direction.dy, best.direction.dx) + error
-            let force: CGFloat = 120 * powerMultiplier
+
+            // Angle error scales with shot difficulty — easier shots are more precise
+            let maxErr: CGFloat
+            switch best.probability {
+            case 0.55...: maxErr = 0.005   // high-probability shot: near-perfect
+            case 0.25..<0.55: maxErr = 0.012
+            default:      maxErr = 0.020   // difficult shot: more variance
+            }
+            let error = CGFloat.random(in: -maxErr...maxErr)
+            let angle = atan2(best.direction.dy, best.direction.dx) + error
+
+            // Power proportional to required distance — avoids overshooting short pots
+            let forceFraction = min(1.0, best.totalDist / 360.0)
+            let force = (55 + 95 * forceFraction) * powerMultiplier
             impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
-            logDesc = "target: \(best.targetType) at (\(String(format:"%.1f", best.target.position.x)), \(String(format:"%.1f", best.target.position.y))), prob: \(String(format:"%.2f", best.probability)), angle error: \(String(format:"%.3f", error)) rad"
+            logDesc = "target: \(best.targetType) at (\(String(format:"%.1f", best.target.position.x)), \(String(format:"%.1f", best.target.position.y))), prob: \(String(format:"%.2f", best.probability)), err: \(String(format:"%.4f", error)) rad, force: \(String(format:"%.0f", force))"
         } else {
             // Easy / Medium: simple nearest-ball + nearest-pocket logic.
             guard let target = findAITarget() else { return }
@@ -1334,6 +1450,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         cue.physicsBody?.applyImpulse(impulse)
 
         waitingForStop        = true
+        updateProbabilityOverlays()   // hide immediately — balls now in play
         ballsWereMoving       = false
         pottedThisShot        = false
         foulThisShot          = false
@@ -1351,6 +1468,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let targetType: BallType
         let direction:  CGVector
         let probability: CGFloat
+        let totalDist:  CGFloat   // cue-to-contact + target-to-pocket, used for power scaling
     }
 
     /// Returns all valid target nodes for the current phase.
@@ -1397,18 +1515,16 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let dot      = max(-1, min(1, Double(dir.dx * potDirX + dir.dy * potDirY)))
         let cutAngle = CGFloat(acos(dot))
 
-        // Angle factor: 1.0 for straight (0°), 0.0 at 90° — drops off as cos²
-        let angleFactor = pow(max(0, CGFloat(cos(Double(cutAngle)))), 2)
+        // Angle factor: cos⁴(θ) — aggressively penalises cut shots.
+        // Straight (0°) = 1.0 · 30° ≈ 0.56 · 45° ≈ 0.25 · 60° ≈ 0.06
+        let angleFactor = pow(max(0, CGFloat(cos(Double(cutAngle)))), 4)
 
-        // Distance factor: shorter total travel = easier
-        let totalDist   = cd + td
-        let distFactor  = exp(-totalDist / 500)
+        // Distance factor: tighter exponential — shorter shot is much easier
+        let totalDist  = cd + td
+        let distFactor = exp(-totalDist / 380)
 
-        // Path factor: heavily penalise if the cue path is obstructed
-        let targetObs = obstacles.filter {
-            hypot($0.x - target.position.x, $0.y - target.position.y) > ballRadius * 2
-        }
-        let pathFactor: CGFloat = isCuePath(from: cuePos, to: contact, clearOf: targetObs) ? 1.0 : 0.05
+        // Path factor: heavily penalise obstructed cue path
+        let pathFactor: CGFloat = isCuePath(from: cuePos, to: contact, clearOf: obstacles) ? 1.0 : 0.04
 
         return (dir, angleFactor * distFactor * pathFactor)
     }
@@ -1432,7 +1548,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
                                                pocket: pocket,
                                                obstacles: obs)
                 if prob > (best?.probability ?? 0) {
-                    best = EvaluatedShot(target: node, targetType: type, direction: dir, probability: prob)
+                    let dist = hypot(node.position.x - pocket.x, node.position.y - pocket.y)
+                        + hypot(cue.position.x - node.position.x, cue.position.y - node.position.y)
+                    best = EvaluatedShot(target: node, targetType: type, direction: dir, probability: prob, totalDist: dist)
                 }
             }
         }
