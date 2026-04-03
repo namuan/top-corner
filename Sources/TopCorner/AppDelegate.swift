@@ -5,13 +5,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
 
+    private var statusItemImage: NSImage? {
+        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+              let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = false
+        return image
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem.button {
-            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-            button.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Top Corner")?
-                .withSymbolConfiguration(config)
+            let fallbackConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+            button.image = statusItemImage
+                ?? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Top Corner")?
+                .withSymbolConfiguration(fallbackConfig)
             button.action = #selector(togglePopover)
             button.target = self
         }

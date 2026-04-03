@@ -21,7 +21,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="TopCorner"
 DERIVED="$ROOT/.build"
 BINARY="$DERIVED/release/$APP_NAME"
-ICON_PNG="$ROOT/Sources/TopCorner/Resources/icon.png"
+ICON_PNG="$ROOT/assets/top-corner-icon.png"
 ICONSET_DIR="$DERIVED/AppIcon.iconset"
 ICON_ICNS="$DERIVED/AppIcon.icns"
 DEST_DIR="$HOME/Applications"
@@ -41,7 +41,7 @@ create_icns_from_png() {
   rm -rf "$ICONSET_DIR"
   mkdir -p "$ICONSET_DIR"
 
-  echo "Generating AppIcon.icns from icon.png..."
+  echo "Generating AppIcon.icns from $(basename "$ICON_PNG")..."
   sips -z 16 16 "$ICON_PNG" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null
   sips -z 32 32 "$ICON_PNG" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null
   sips -z 32 32 "$ICON_PNG" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null

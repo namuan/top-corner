@@ -428,57 +428,61 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         divider.zPosition   = 9
         addChild(divider)
 
-        // ── SCORE section (top) ───────────────────────────────────────
-        addSideHeader("SCORE", y: 358)
+        // ── SCORE section ────────────────────────────────────────────
+        // y=322..380 (58px). Content height ≈44px → 7px padding top+bottom.
+        // header_top=373→baseline=366; P1 dot=352, label=348; P2 dot=336, label=332
+        addSideHeader("SCORE", y: 366)
 
-        // Player 1 row
         player1Dot = SKShapeNode(circleOfRadius: 4)
-        player1Dot.position  = CGPoint(x: sideInL + 4, y: 342)
+        player1Dot.position  = CGPoint(x: sideInL + 4, y: 352)
         player1Dot.zPosition = 11
         addChild(player1Dot)
         let p1Lbl = SKLabelNode(text: "P1")
         p1Lbl.fontName  = "Helvetica Neue"
         p1Lbl.fontSize  = 11
         p1Lbl.fontColor = NSColor(white: 0.75, alpha: 1)
-        p1Lbl.position  = CGPoint(x: sideInL + 16, y: 336)
+        p1Lbl.position  = CGPoint(x: sideInL + 16, y: 348)
         p1Lbl.horizontalAlignmentMode = .left
         p1Lbl.zPosition = 10
         addChild(p1Lbl)
         score1Label = SKLabelNode(fontNamed: "Helvetica Neue Bold")
-        score1Label.fontSize  = 16
+        score1Label.fontSize  = 15
         score1Label.fontColor = .white
-        score1Label.position  = CGPoint(x: sideInR, y: 336)
+        score1Label.position  = CGPoint(x: sideInR, y: 348)
         score1Label.horizontalAlignmentMode = .right
         score1Label.zPosition = 10
         addChild(score1Label)
 
-        // Player 2 row
         player2Dot = SKShapeNode(circleOfRadius: 4)
-        player2Dot.position  = CGPoint(x: sideInL + 4, y: 318)
+        player2Dot.position  = CGPoint(x: sideInL + 4, y: 336)
         player2Dot.zPosition = 11
         addChild(player2Dot)
         let p2Lbl = SKLabelNode(text: "P2")
         p2Lbl.fontName  = "Helvetica Neue"
         p2Lbl.fontSize  = 11
         p2Lbl.fontColor = NSColor(white: 0.75, alpha: 1)
-        p2Lbl.position  = CGPoint(x: sideInL + 16, y: 312)
+        p2Lbl.position  = CGPoint(x: sideInL + 16, y: 332)
         p2Lbl.horizontalAlignmentMode = .left
         p2Lbl.zPosition = 10
         addChild(p2Lbl)
         score2Label = SKLabelNode(fontNamed: "Helvetica Neue Bold")
-        score2Label.fontSize  = 16
+        score2Label.fontSize  = 15
         score2Label.fontColor = NSColor(white: 0.55, alpha: 1)
-        score2Label.position  = CGPoint(x: sideInR, y: 312)
+        score2Label.position  = CGPoint(x: sideInR, y: 332)
         score2Label.horizontalAlignmentMode = .right
         score2Label.zPosition = 10
         addChild(score2Label)
 
-        addSideSeparator(y: 298)
+        addSideSeparator(y: 322)
 
-        // ── NEXT BALL section ─────────────────────────────────────────
-        addSideHeader("NEXT BALL", y: 276)
-        nextBallIndicator = SKShapeNode(circleOfRadius: 16)
-        nextBallIndicator.position    = CGPoint(x: sideCX, y: 242)
+        // ── NEXT BALL section — inline circle + label ─────────────────
+        // y=278..322 (44px). Content height ≈28px → 8px padding top+bottom.
+        // header_top=314→baseline=307; circle cy=295; label y=291 (left of circle)
+        // Horizontally: unit (18px circle + 5px gap + ~40px text) centred around sideCX
+        addSideHeader("NEXT BALL", y: 307)
+
+        nextBallIndicator = SKShapeNode(circleOfRadius: 9)
+        nextBallIndicator.position    = CGPoint(x: sideCX - 22, y: 295)
         nextBallIndicator.strokeColor = NSColor.white.withAlphaComponent(0.35)
         nextBallIndicator.lineWidth   = 1
         nextBallIndicator.zPosition   = 10
@@ -487,29 +491,32 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         nextBallLabel = SKLabelNode(fontNamed: "Helvetica Neue")
         nextBallLabel.fontSize  = 11
         nextBallLabel.fontColor = NSColor(white: 0.75, alpha: 1)
-        nextBallLabel.position  = CGPoint(x: sideCX, y: 216)
-        nextBallLabel.horizontalAlignmentMode = .center
+        nextBallLabel.position  = CGPoint(x: sideCX - 8, y: 291)
+        nextBallLabel.horizontalAlignmentMode = .left
         nextBallLabel.zPosition = 10
         addChild(nextBallLabel)
 
-        addSideSeparator(y: 204)
+        addSideSeparator(y: 278)
 
         // ── STATUS / MESSAGE ──────────────────────────────────────────
+        // y=254..278 (24px). 11pt label visually centred at section mid (266).
+        // baseline = 266 − (11×0.25) ≈ 263
         messageLabel = SKLabelNode(fontNamed: "Helvetica Neue")
         messageLabel.fontSize  = 11
         messageLabel.fontColor = NSColor.yellow
-        messageLabel.position  = CGPoint(x: sideCX, y: 188)
+        messageLabel.position  = CGPoint(x: sideCX, y: 263)
         messageLabel.horizontalAlignmentMode = .center
         messageLabel.zPosition = 10
         addChild(messageLabel)
 
-        addSideSeparator(y: 176)
+        addSideSeparator(y: 254)
 
         // ── POWER section ─────────────────────────────────────────────
-        addSideHeader("POWER", y: 164)
+        // y=192..254 (62px). Content: header+buttons(22px)+pips → height≈52px → 5px padding.
+        // header_top=249→baseline=242; buttons rect y=210..232; pips cy=200
+        addSideHeader("POWER", y: 242)
 
-        // [–] button
-        let minusBg = SKShapeNode(rect: CGRect(x: sideInL, y: 130, width: 26, height: 26), cornerRadius: 4)
+        let minusBg = SKShapeNode(rect: CGRect(x: sideInL, y: 210, width: 22, height: 22), cornerRadius: 4)
         minusBg.fillColor   = NSColor(white: 0.25, alpha: 1)
         minusBg.strokeColor = NSColor(white: 0.40, alpha: 1)
         minusBg.lineWidth   = 0.5
@@ -518,16 +525,15 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         addChild(minusBg)
         let minusLbl = SKLabelNode(text: "–")
         minusLbl.fontName  = "Helvetica Neue"
-        minusLbl.fontSize  = 16
+        minusLbl.fontSize  = 15
         minusLbl.fontColor = .white
-        minusLbl.position  = CGPoint(x: sideInL + 13, y: 133)
+        minusLbl.position  = CGPoint(x: sideInL + 11, y: 217)
         minusLbl.horizontalAlignmentMode = .center
         minusLbl.zPosition = 11
         minusLbl.name      = "pwrMinus"
         addChild(minusLbl)
 
-        // [+] button
-        let plusBg = SKShapeNode(rect: CGRect(x: sideInR - 26, y: 130, width: 26, height: 26), cornerRadius: 4)
+        let plusBg = SKShapeNode(rect: CGRect(x: sideInR - 22, y: 210, width: 22, height: 22), cornerRadius: 4)
         plusBg.fillColor   = NSColor(white: 0.25, alpha: 1)
         plusBg.strokeColor = NSColor(white: 0.40, alpha: 1)
         plusBg.lineWidth   = 0.5
@@ -536,30 +542,29 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         addChild(plusBg)
         let plusLbl = SKLabelNode(text: "+")
         plusLbl.fontName  = "Helvetica Neue"
-        plusLbl.fontSize  = 15
+        plusLbl.fontSize  = 14
         plusLbl.fontColor = .white
-        plusLbl.position  = CGPoint(x: sideInR - 13, y: 134)
+        plusLbl.position  = CGPoint(x: sideInR - 11, y: 217)
         plusLbl.horizontalAlignmentMode = .center
         plusLbl.zPosition = 11
         plusLbl.name      = "pwrPlus"
         addChild(plusLbl)
 
-        // Power number label
         powerLabel = SKLabelNode(fontNamed: "Helvetica Neue Bold")
-        powerLabel.fontSize  = 15
+        powerLabel.fontSize  = 14
         powerLabel.fontColor = .white
-        powerLabel.position  = CGPoint(x: sideCX, y: 134)
+        powerLabel.position  = CGPoint(x: sideCX, y: 217)
         powerLabel.horizontalAlignmentMode = .center
         powerLabel.zPosition = 11
         addChild(powerLabel)
 
-        // Power pip indicators
+        // Pips centred horizontally around sideCX; cy=200 (7px below buttons, 5px above sep)
         powerPips = []
-        let pipSpacing: CGFloat = 18
+        let pipSpacing: CGFloat = 16
         let pipStartX = sideCX - pipSpacing * 2
         for i in 0..<5 {
-            let pip = SKShapeNode(circleOfRadius: 5)
-            pip.position  = CGPoint(x: pipStartX + CGFloat(i) * pipSpacing, y: 116)
+            let pip = SKShapeNode(circleOfRadius: 3)
+            pip.position  = CGPoint(x: pipStartX + CGFloat(i) * pipSpacing, y: 200)
             pip.lineWidth = 1
             pip.zPosition = 10
             addChild(pip)
@@ -567,18 +572,20 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         }
         updatePowerPips()
 
-        addSideSeparator(y: 104)
+        addSideSeparator(y: 192)
 
-        // ── AI LEVEL section ──────────────────────────────────────────
-        addSideHeader("AI LEVEL", y: 95)
+        // ── AI LEVEL + SHOW ODDS section ──────────────────────────────
+        // y=98..192 (94px). Content: header+diff(16px)+odds(16px) → height≈57px → 18px padding.
+        // header_top=174→baseline=167; diff rect y=141..157; odds rect y=117..133
+        addSideHeader("AI LEVEL", y: 167)
 
         let diffData: [(AIDifficulty, String, CGFloat)] = [
             (.easy,   "Easy", sideInL),
-            (.medium, "Med",  sideInL + 45),
-            (.hard,   "Hard", sideInL + 90),
+            (.medium, "Med",  sideInL + 46),
+            (.hard,   "Hard", sideInL + 92),
         ]
         for (diff, title, bx) in diffData {
-            let bg = SKShapeNode(rect: CGRect(x: bx, y: 76, width: 40, height: 16), cornerRadius: 3)
+            let bg = SKShapeNode(rect: CGRect(x: bx, y: 141, width: 40, height: 16), cornerRadius: 3)
             bg.lineWidth   = 0.5
             bg.zPosition   = 10
             bg.name        = "diff_\(diff.rawValue)"
@@ -589,7 +596,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             lbl.fontName  = "Helvetica Neue"
             lbl.fontSize  = 10
             lbl.fontColor = .white
-            lbl.position  = CGPoint(x: bx + 20, y: 80)
+            lbl.position  = CGPoint(x: bx + 20, y: 147)
             lbl.horizontalAlignmentMode = .center
             lbl.zPosition = 11
             lbl.name      = "diff_\(diff.rawValue)"
@@ -597,8 +604,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         }
         updateDifficultyButtons()
 
-        // ── SHOW ODDS toggle ──────────────────────────────────────────
-        let oddsBg = SKShapeNode(rect: CGRect(x: sideInL, y: 58, width: sideW, height: 14), cornerRadius: 3)
+        let oddsBg = SKShapeNode(rect: CGRect(x: sideInL, y: 117, width: sideW, height: 16), cornerRadius: 3)
         oddsBg.lineWidth   = 0.5
         oddsBg.zPosition   = 10
         oddsBg.name        = "oddsToggle"
@@ -607,9 +613,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         let oddsLbl = SKLabelNode(text: "")
         oddsLbl.fontName  = "Helvetica Neue"
-        oddsLbl.fontSize  = 9
+        oddsLbl.fontSize  = 10
         oddsLbl.fontColor = .white
-        oddsLbl.position  = CGPoint(x: sideCX, y: 62)
+        oddsLbl.position  = CGPoint(x: sideCX, y: 123)
         oddsLbl.horizontalAlignmentMode = .center
         oddsLbl.zPosition = 11
         oddsLbl.name      = "oddsToggle"
@@ -617,10 +623,12 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         oddsToggleLabel = oddsLbl
         updateOddsToggle()
 
-        addSideSeparator(y: 54)
+        addSideSeparator(y: 98)
 
-        // ── RESET button ──────────────────────────────────────────────
-        let resetBg = SKShapeNode(rect: CGRect(x: sideInL, y: 28, width: sideW, height: 22), cornerRadius: 5)
+        // ── Action buttons ────────────────────────────────────────────
+        // y=0..98 (98px). Two 24px buttons + 10px gap = 58px → 20px padding top+bottom.
+        // New Game rect y=54..78; Quit rect y=20..44
+        let resetBg = SKShapeNode(rect: CGRect(x: sideInL, y: 54, width: sideW, height: 24), cornerRadius: 5)
         resetBg.fillColor   = NSColor(white: 0.25, alpha: 1)
         resetBg.strokeColor = NSColor(white: 0.42, alpha: 1)
         resetBg.lineWidth   = 0.5
@@ -631,14 +639,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         resetLbl.fontName   = "Helvetica Neue"
         resetLbl.fontSize   = 11
         resetLbl.fontColor  = .white
-        resetLbl.position   = CGPoint(x: sideCX, y: 34)
+        resetLbl.position   = CGPoint(x: sideCX, y: 63)
         resetLbl.horizontalAlignmentMode = .center
         resetLbl.zPosition  = 11
         resetLbl.name       = "resetBtn"
         addChild(resetLbl)
 
-        // ── QUIT button ───────────────────────────────────────────────
-        let quitBg = SKShapeNode(rect: CGRect(x: sideInL, y: 4, width: sideW, height: 22), cornerRadius: 5)
+        let quitBg = SKShapeNode(rect: CGRect(x: sideInL, y: 20, width: sideW, height: 24), cornerRadius: 5)
         quitBg.fillColor   = NSColor(red: 0.45, green: 0.08, blue: 0.08, alpha: 1)
         quitBg.strokeColor = NSColor(red: 0.65, green: 0.18, blue: 0.18, alpha: 1)
         quitBg.lineWidth   = 0.5
@@ -649,7 +656,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         quitLbl.fontName   = "Helvetica Neue"
         quitLbl.fontSize   = 11
         quitLbl.fontColor  = .white
-        quitLbl.position   = CGPoint(x: sideCX, y: 10)
+        quitLbl.position   = CGPoint(x: sideCX, y: 29)
         quitLbl.horizontalAlignmentMode = .center
         quitLbl.zPosition  = 11
         quitLbl.name       = "quitBtn"
