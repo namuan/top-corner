@@ -82,7 +82,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // Layout
     private let tableRect    = CGRect(x: 8, y: 8, width: 656, height: 364)
     private let ballRadius:  CGFloat = 10
-    private let pocketRadius: CGFloat = 15
+    private let cornerPocketRadius: CGFloat = 17
+    private let middlePocketRadius: CGFloat = 13
 
     // Nodes
     private var cueBall: SKShapeNode!
@@ -213,38 +214,50 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private func setupCushions() {
         let t = tableRect
         let thickness: CGFloat = 6
-        let pR = pocketRadius
+        let cR = cornerPocketRadius
+        let mR = middlePocketRadius
 
-        // Cushion rects (inset from baize edges, with gaps at pockets)
-        let segments: [(CGRect, String)] = [
-            // Bottom left half
-            (CGRect(x: t.minX + pR,       y: t.minY,            width: t.width/2 - pR * 1.5, height: thickness), "bot-L"),
-            // Bottom right half
-            (CGRect(x: t.midX + pR * 0.5, y: t.minY,            width: t.width/2 - pR * 1.5, height: thickness), "bot-R"),
-            // Top left half
-            (CGRect(x: t.minX + pR,       y: t.maxY - thickness, width: t.width/2 - pR * 1.5, height: thickness), "top-L"),
-            // Top right half
-            (CGRect(x: t.midX + pR * 0.5, y: t.maxY - thickness, width: t.width/2 - pR * 1.5, height: thickness), "top-R"),
-            // Left cushion
-            (CGRect(x: t.minX,            y: t.minY + pR,       width: thickness, height: t.height - pR * 2), "left"),
-            // Right cushion
-            (CGRect(x: t.maxX - thickness, y: t.minY + pR,      width: thickness, height: t.height - pR * 2), "right"),
+        // Visual cushion rects
+        let visualRects: [CGRect] = [
+            CGRect(x: t.minX + cR,        y: t.minY,            width: t.width/2 - cR - mR * 0.5, height: thickness),
+            CGRect(x: t.midX + mR * 0.5,  y: t.minY,            width: t.width/2 - mR * 0.5 - cR, height: thickness),
+            CGRect(x: t.minX + cR,        y: t.maxY - thickness, width: t.width/2 - cR - mR * 0.5, height: thickness),
+            CGRect(x: t.midX + mR * 0.5,  y: t.maxY - thickness, width: t.width/2 - mR * 0.5 - cR, height: thickness),
+            CGRect(x: t.minX,             y: t.minY + cR,        width: thickness, height: t.height - cR * 2),
+            CGRect(x: t.maxX - thickness,  y: t.minY + cR,       width: thickness, height: t.height - cR * 2),
         ]
-
-        for (rect, _) in segments {
+        for rect in visualRects {
             let node = SKShapeNode(rect: rect)
             node.fillColor   = NSColor(red: 0.07, green: 0.52, blue: 0.16, alpha: 1)
             node.strokeColor = .clear
             node.zPosition   = 2
+            addChild(node)
+        }
 
-            let body = SKPhysicsBody(edgeLoopFrom: rect)
+        // Physics edges at the actual table boundary so balls travel to the rail face
+        let physicsEdges: [(CGPoint, CGPoint)] = [
+            // Bottom wall (left half)
+            (CGPoint(x: t.minX + cR,       y: t.minY), CGPoint(x: t.midX - mR * 0.5, y: t.minY)),
+            // Bottom wall (right half)
+            (CGPoint(x: t.midX + mR * 0.5, y: t.minY), CGPoint(x: t.maxX - cR,       y: t.minY)),
+            // Top wall (left half)
+            (CGPoint(x: t.minX + cR,       y: t.maxY), CGPoint(x: t.midX - mR * 0.5, y: t.maxY)),
+            // Top wall (right half)
+            (CGPoint(x: t.midX + mR * 0.5, y: t.maxY), CGPoint(x: t.maxX - cR,       y: t.maxY)),
+            // Left wall
+            (CGPoint(x: t.minX, y: t.minY + cR), CGPoint(x: t.minX, y: t.maxY - cR)),
+            // Right wall
+            (CGPoint(x: t.maxX, y: t.minY + cR), CGPoint(x: t.maxX, y: t.maxY - cR)),
+        ]
+        for (start, end) in physicsEdges {
+            let node = SKNode()
+            let body = SKPhysicsBody(edgeFrom: start, to: end)
             body.friction    = 0.1
             body.restitution = 0.75
             body.categoryBitMask    = PhysicsCategory.cushion.rawValue
             body.collisionBitMask   = PhysicsCategory.ball.rawValue
             body.contactTestBitMask = 0
             node.physicsBody = body
-
             addChild(node)
         }
     }
@@ -253,17 +266,16 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
     private func setupPockets() {
         let t = tableRect
-        let pR = pocketRadius
-        let positions: [CGPoint] = [
-            CGPoint(x: t.minX,  y: t.minY),   // bottom-left
-            CGPoint(x: t.midX,  y: t.minY),   // bottom-mid
-            CGPoint(x: t.maxX,  y: t.minY),   // bottom-right
-            CGPoint(x: t.minX,  y: t.maxY),   // top-left
-            CGPoint(x: t.midX,  y: t.maxY),   // top-mid
-            CGPoint(x: t.maxX,  y: t.maxY),   // top-right
+        let positions: [(CGPoint, CGFloat)] = [
+            (CGPoint(x: t.minX,  y: t.minY), cornerPocketRadius),   // bottom-left
+            (CGPoint(x: t.midX,  y: t.minY), middlePocketRadius),   // bottom-mid
+            (CGPoint(x: t.maxX,  y: t.minY), cornerPocketRadius),   // bottom-right
+            (CGPoint(x: t.minX,  y: t.maxY), cornerPocketRadius),   // top-left
+            (CGPoint(x: t.midX,  y: t.maxY), middlePocketRadius),   // top-mid
+            (CGPoint(x: t.maxX,  y: t.maxY), cornerPocketRadius),   // top-right
         ]
 
-        for pos in positions {
+        for (pos, pR) in positions {
             let pocket = SKShapeNode(circleOfRadius: pR)
             pocket.position    = pos
             pocket.fillColor   = NSColor(red: 0.04, green: 0.04, blue: 0.04, alpha: 1)
