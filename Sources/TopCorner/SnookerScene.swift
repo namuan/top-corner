@@ -151,6 +151,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         physicsWorld.gravity   = .zero
         physicsWorld.contactDelegate = self
 
+        loadSettings()
         setupTable()
         setupCushions()
         setupPockets()
@@ -364,6 +365,29 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // MARK: UI
 
     private let aiActionKey = "ai_shot"
+
+    // UserDefaults keys for persisted settings
+    private enum PrefKey {
+        static let power      = "tc_powerMultiplier"
+        static let difficulty = "tc_aiDifficulty"
+    }
+
+    private func loadSettings() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: PrefKey.power) != nil {
+            powerMultiplier = CGFloat(defaults.double(forKey: PrefKey.power))
+        }
+        if defaults.object(forKey: PrefKey.difficulty) != nil,
+           let diff = AIDifficulty(rawValue: defaults.integer(forKey: PrefKey.difficulty)) {
+            aiDifficulty = diff
+        }
+        gLog("Settings loaded — power: \(Int(powerMultiplier)), difficulty: \(aiDifficulty.label)", .debug)
+    }
+
+    private func saveSettings() {
+        UserDefaults.standard.set(Double(powerMultiplier), forKey: PrefKey.power)
+        UserDefaults.standard.set(aiDifficulty.rawValue,  forKey: PrefKey.difficulty)
+    }
 
     // Sidebar geometry constants
     // Scene: 820×380. Table occupies x=8..664, y=8..372.
@@ -669,8 +693,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             nextBallIndicator.fillColor = BallType.red.color
             nextBallLabel.text = "Next: Red"
         case .needColour:
-            nextBallIndicator.fillColor = BallType.black.color
-            nextBallLabel.text = "Next: Colour"
+            // Any colour is valid — show a neutral white indicator, not a specific ball
+            nextBallIndicator.fillColor = NSColor(white: 0.85, alpha: 1)
+            nextBallLabel.text = "Next: Any Colour"
         case .redsAllGone:
             let next = clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
             nextBallIndicator.fillColor = next.color
@@ -701,6 +726,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             aiDifficulty = diff
             gLog("AI difficulty set to \(diff.label)")
             updateDifficultyButtons()
+            saveSettings()
             return
         }
 
@@ -785,6 +811,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         powerMultiplier = max(1, min(5, powerMultiplier + delta))
         gLog("Power adjusted to \(Int(powerMultiplier))", .debug)
         updatePowerPips()
+        saveSettings()
     }
 
     private func drawAimLine(from start: CGPoint, to end: CGPoint) {
@@ -1088,22 +1115,33 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             }
         }
 
+        let turnSwitched: Bool
         if foulThisShot {
             // Award penalty to opponent and hand over turn
             let opponent = 1 - currentPlayer
             scores[opponent] += foulPenalty
             gLog("Turn end — FOUL: P\(opponent + 1) awarded \(foulPenalty)pt (score now \(scores[opponent])). Turn passes to P\(opponent + 1)")
             currentPlayer = opponent
+            turnSwitched = true
         } else if !pottedThisShot {
             // Clean miss — switch player, clear foul display
             let next = 1 - currentPlayer
             gLog("Turn end — clean miss. Turn passes to P\(next + 1)")
             currentPlayer = next
             foulFlag = false
+            turnSwitched = true
         } else {
             gLog("Turn end — pot(s) scored. P\(currentPlayer + 1) continues (score: \(scores[currentPlayer]))")
+            turnSwitched = false
         }
-        // Clean pot → same player continues
+
+        // Red–colour alternation is a within-break rule.
+        // When the turn switches, the new player always starts on red
+        // (as long as reds remain). Only redsAllGone clearance order persists.
+        if turnSwitched && redsOnTable > 0 && phase != .needRed {
+            gLog("Turn switched — phase reset to needRed for P\(currentPlayer + 1) (\(redsOnTable) reds remain)")
+            phase = .needRed
+        }
 
         let wasCueBallPotted  = cueBallPottedThisShot
         if foulThisShot { lastFoulPenalty = foulPenalty }
@@ -1248,13 +1286,18 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         guard let cue = cueBall, currentPlayer == 1, !isPlacingCueBall else { return }
         guard let target = findAITarget() else { return }
 
-        let pockets = aiPocketPositions()
+        let pockets     = aiPocketPositions()
+        let targetType  = balls[target] ?? .red
+        // Obstacle positions for Hard-mode path checking (exclude cue and target)
+        let obstacles   = balls.keys.filter { $0 !== cue && $0 !== target }.map { $0.position }
 
-        // Ghost-ball: for each pocket find the contact point that pots the target,
-        // then aim the cue ball at that contact point.  Pick the pocket with the
-        // shortest cue-ball → contact path (simplest shot geometry).
-        var bestDir  = CGVector(dx: 1, dy: 0)
-        var bestCost = CGFloat.infinity
+        // Evaluate each pocket. For Hard difficulty only consider clear paths;
+        // fall back to any path if every pocket is obstructed.
+        var bestDir      = CGVector(dx: 1, dy: 0)
+        var bestCost     = CGFloat.infinity
+        var bestDirAny   = CGVector(dx: 1, dy: 0)  // fallback ignoring obstructions
+        var bestCostAny  = CGFloat.infinity
+        var clearedPocketFound = false
 
         for pocket in pockets {
             let tdx = target.position.x - pocket.x
@@ -1273,21 +1316,37 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             let cd  = hypot(cdx, cdy)
             guard cd > 0 else { continue }
 
-            // Cost: distance cue must travel to reach contact point
+            // Track unconditional best (used as fallback)
+            if cd < bestCostAny {
+                bestCostAny = cd
+                bestDirAny  = CGVector(dx: cdx / cd, dy: cdy / cd)
+            }
+
+            // Hard mode: skip paths where another ball is in the way
+            if aiDifficulty == .hard {
+                guard isCuePath(from: cue.position, to: contact, clearOf: obstacles) else { continue }
+            }
+
             if cd < bestCost {
                 bestCost = cd
                 bestDir  = CGVector(dx: cdx / cd, dy: cdy / cd)
+                clearedPocketFound = true
             }
+        }
+
+        // If Hard mode found no clear pocket, fall back to nearest regardless of obstruction
+        if !clearedPocketFound {
+            bestDir = bestDirAny
+            gLog("AI (Hard) — no clear path found, falling back to nearest pocket", .warning)
         }
 
         // Add random angular error scaled to difficulty
         let maxErr = aiDifficulty.angleError
         let error  = CGFloat.random(in: -maxErr...maxErr)
-        let angle = atan2(bestDir.dy, bestDir.dx) + error
+        let angle  = atan2(bestDir.dy, bestDir.dx) + error
         let force: CGFloat = 120 * powerMultiplier
         let impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
-        let targetType = balls[target] ?? .red
-        gLog("AI shot — target: \(targetType) at (\(String(format:"%.1f", target.position.x)), \(String(format:"%.1f", target.position.y))), angle error: \(String(format:"%.3f", error)) rad, impulse (dx:\(String(format:"%.1f", impulse.dx)) dy:\(String(format:"%.1f", impulse.dy)))")
+        gLog("AI shot — target: \(targetType) at (\(String(format:"%.1f", target.position.x)), \(String(format:"%.1f", target.position.y))), angle error: \(String(format:"%.3f", error)) rad, clear path: \(clearedPocketFound), impulse (dx:\(String(format:"%.1f", impulse.dx)) dy:\(String(format:"%.1f", impulse.dy)))")
         cue.physicsBody?.applyImpulse(impulse)
 
         waitingForStop        = true
@@ -1317,10 +1376,23 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             }
         case .needColour:
             if aiDifficulty.usesRandomTarget {
-                // Easy: pick any available colour at random
                 return colouredBalls.values.randomElement()
             }
-            // Medium/Hard: highest value colour
+            // Hard: walk highest → lowest value, pick first colour that has at
+            // least one unobstructed cue-path to a pocket.
+            if aiDifficulty == .hard, let cue = cueBall {
+                let obstacles = balls.keys.filter { $0 !== cue }.map { $0.position }
+                for t in [BallType.black, .pink, .blue, .brown, .green, .yellow] {
+                    guard let node = colouredBalls[t] else { continue }
+                    if hasAnyClearShot(cuePos: cue.position, target: node, obstacles: obstacles) {
+                        gLog("AI (Hard) needColour — chose \(t) (clear path exists)", .debug)
+                        return node
+                    }
+                }
+                // All colours obstructed — fall back to highest available
+                gLog("AI (Hard) needColour — all colours obstructed, falling back to black", .warning)
+            }
+            // Medium (or Hard fallback): highest value colour
             for t in [BallType.black, .pink, .blue, .brown, .green, .yellow] {
                 if let node = colouredBalls[t] { return node }
             }
@@ -1329,6 +1401,49 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             let required = clearanceOrder[min(clearanceIndex, clearanceOrder.count - 1)]
             return colouredBalls[required]
         }
+    }
+
+    /// Returns true when at least one pocket has a clear cue-ball path through the target.
+    private func hasAnyClearShot(cuePos: CGPoint, target: SKShapeNode, obstacles: [CGPoint]) -> Bool {
+        for pocket in aiPocketPositions() {
+            let tdx = target.position.x - pocket.x
+            let tdy = target.position.y - pocket.y
+            let td  = hypot(tdx, tdy)
+            guard td > 0 else { continue }
+            let contact = CGPoint(
+                x: target.position.x + (tdx / td) * ballRadius * 2,
+                y: target.position.y + (tdy / td) * ballRadius * 2
+            )
+            // Exclude the target itself from obstacle list for this check
+            let obs = obstacles.filter {
+                hypot($0.x - target.position.x, $0.y - target.position.y) > ballRadius
+            }
+            if isCuePath(from: cuePos, to: contact, clearOf: obs) { return true }
+        }
+        return false
+    }
+
+    /// Returns true when the cue ball can travel from `from` to `to` without
+    /// passing within one ball-diameter of any obstacle centre.
+    private func isCuePath(from: CGPoint, to: CGPoint, clearOf obstacles: [CGPoint]) -> Bool {
+        let dx   = to.x - from.x
+        let dy   = to.y - from.y
+        let len2 = dx * dx + dy * dy
+        guard len2 > 0 else { return true }
+        let minDist = ballRadius * 2   // cue + obstacle both have radius r
+
+        for obs in obstacles {
+            let fx = obs.x - from.x
+            let fy = obs.y - from.y
+            // Project onto segment, clamp to [0,1]
+            let t  = max(0, min(1, (fx * dx + fy * dy) / len2))
+            let ex = from.x + t * dx - obs.x
+            let ey = from.y + t * dy - obs.y
+            if ex * ex + ey * ey < minDist * minDist {
+                return false
+            }
+        }
+        return true
     }
 
     private func aiPocketPositions() -> [CGPoint] {
