@@ -67,6 +67,21 @@ private enum AIDifficulty: Int, CaseIterable {
     }
 }
 
+// MARK: - AI Configuration
+
+private enum AIConfig {
+    static let distDecayBase:         CGFloat = 380   // probability distance-decay denominator
+    static let safetyThreshold:       CGFloat = 0.12  // play safe below this pot probability
+    static let lookaheadWeightRed:    CGFloat = 0.35  // next-shot blend weight when potting reds
+    static let lookaheadWeightColour: CGFloat = 0.45  // higher weight after colour — sets up reds
+    static let forceCalibDist:        CGFloat = 480   // force scaling denominator
+    static let targetLeaveBuffer:     CGFloat = 120   // desired px gap between leave and next target
+    static let minDesiredRoll:        CGFloat = 60    // minimum cue-ball post-contact roll
+    static let safetyForceMin:        CGFloat = 35
+    static let safetyForceMax:        CGFloat = 65
+    static let safetyPathThreshold:   CGFloat = 0.4   // minimum clearance for a valid safety path
+}
+
 // MARK: - Game State
 
 private enum TurnPhase {
@@ -88,7 +103,12 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // Nodes
     private var cueBall: SKShapeNode!
     private var balls:   [SKShapeNode: BallType] = [:]
-    private var aimLine: SKShapeNode?
+    private var aimLine:       SKNode?
+    // Sub-nodes of aimLine — created once, updated each drag event to avoid per-frame allocation
+    private var aimCueLine:    SKShapeNode?
+    private var aimGhostBall:  SKShapeNode?
+    private var aimTargetLine: SKShapeNode?
+    private var aimPowerDot:   SKShapeNode?
 
     // Input
     private var isDragging            = false
@@ -134,6 +154,9 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private var oddsToggleNode:      SKShapeNode?
     private var oddsToggleLabel:     SKLabelNode?
     private var probabilityOverlays: [SKNode]   = []
+
+    // Pocket positions and radii — populated in setupPockets(), used by shot evaluation
+    private var pocketData: [(position: CGPoint, radius: CGFloat)] = []
 
     // UI
     private var score1Label:      SKLabelNode!
@@ -274,6 +297,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             (CGPoint(x: t.midX,  y: t.maxY), middlePocketRadius),   // top-mid
             (CGPoint(x: t.maxX,  y: t.maxY), cornerPocketRadius),   // top-right
         ]
+
+        pocketData = positions.map { (position: $0.0, radius: $0.1) }
 
         for (pos, pR) in positions {
             let pocket = SKShapeNode(circleOfRadius: pR)
@@ -782,14 +807,13 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let allObs    = balls.keys.filter { $0 !== cue }.map { $0.position }
 
         for (node, _) in targets {
-            let obs = allObs.filter {
-                hypot($0.x - node.position.x, $0.y - node.position.y) > ballRadius * 2
-            }
+            let obs = obstaclesExcluding(allObs, ballAt: node.position)
             var bestProb: CGFloat = 0
-            for pocket in pockets {
+            for (pocketPos, pocketRadius) in pockets {
                 let (_, p) = evaluateShot(cuePos: cue.position,
                                           target: node,
-                                          pocket: pocket,
+                                          pocket: pocketPos,
+                                          pocketRadius: pocketRadius,
                                           obstacles: obs)
                 if p > bestProb { bestProb = p }
             }
@@ -903,11 +927,11 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         guard isDragging, let cue = cueBall else { return }
         isDragging = false
         aimLine?.removeFromParent()
-        aimLine = nil
+        aimLine = nil; aimCueLine = nil; aimGhostBall = nil; aimTargetLine = nil; aimPowerDot = nil
 
         let loc  = event.location(in: self)
-        let dx   = dragStart.x - loc.x
-        let dy   = dragStart.y - loc.y
+        let dx   = cue.position.x - loc.x
+        let dy   = cue.position.y - loc.y
         let dist = hypot(dx, dy)
         guard dist > 4 else { return }
 
@@ -937,42 +961,110 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         saveSettings()
     }
 
+    /// Returns the point where a ray from `from` in direction (dirX, dirY) first hits
+    /// the table boundary, clamped to a sensible maximum so it never overshoots.
+    private func rayToTableEdge(from origin: CGPoint, dirX: CGFloat, dirY: CGFloat) -> CGPoint {
+        let t = tableRect
+        var tMin = CGFloat.infinity
+        if dirX > 0 { tMin = min(tMin, (t.maxX - origin.x) / dirX) }
+        else if dirX < 0 { tMin = min(tMin, (t.minX - origin.x) / dirX) }
+        if dirY > 0 { tMin = min(tMin, (t.maxY - origin.y) / dirY) }
+        else if dirY < 0 { tMin = min(tMin, (t.minY - origin.y) / dirY) }
+        let safeT = max(0, min(tMin, 1000))
+        return CGPoint(x: origin.x + dirX * safeT, y: origin.y + dirY * safeT)
+    }
+
     private func drawAimLine(from start: CGPoint, to end: CGPoint) {
-        aimLine?.removeFromParent()
+        guard let cue = cueBall else { return }
 
-        let dx = start.x - end.x
-        let dy = start.y - end.y
+        // Direction is always anchored to the cue ball centre so the visual and
+        // the actual shot trajectory share the same origin and direction.
+        let dx = cue.position.x - end.x
+        let dy = cue.position.y - end.y
         let dist = hypot(dx, dy)
-        guard dist > 2, let cue = cueBall else { return }
+        guard dist > 2 else { return }
 
-        let maxLen: CGFloat = 160
-        let ratio = min(dist, maxLen) / maxLen
-        let lineEnd = CGPoint(
-            x: cue.position.x + (dx / dist) * maxLen,
-            y: cue.position.y + (dy / dist) * maxLen
-        )
+        let dirX  = dx / dist
+        let dirY  = dy / dist
+        let ratio = min(hypot(start.x - end.x, start.y - end.y), 160) / 160
 
-        let path = CGMutablePath()
-        path.move(to: cue.position)
-        path.addLine(to: lineEnd)
+        // Lazy creation — nodes are reused across drag events to avoid per-frame allocation.
+        if aimLine == nil {
+            let container = SKNode()
+            container.zPosition = 8
+            addChild(container)
 
-        let line = SKShapeNode(path: path)
-        line.strokeColor = NSColor.white.withAlphaComponent(0.5 + ratio * 0.4)
-        line.lineWidth   = 1.5
-        line.lineCap     = .round
-        line.zPosition   = 8
-        line.name        = "aimLine"
+            let cl = SKShapeNode(); cl.lineWidth = 1; cl.lineCap = .round
+            container.addChild(cl); aimCueLine = cl
 
-        // Power dot
-        let dot = SKShapeNode(circleOfRadius: 3 + ratio * 4)
-        dot.position    = end
-        dot.fillColor   = NSColor(red: 1, green: 0.5 - ratio * 0.5, blue: 0, alpha: 0.8)
-        dot.strokeColor = .clear
-        dot.zPosition   = 8
-        line.addChild(dot)
+            let gb = SKShapeNode(circleOfRadius: ballRadius)
+            gb.fillColor   = NSColor.white.withAlphaComponent(0.18)
+            gb.strokeColor = NSColor.white.withAlphaComponent(0.70)
+            gb.lineWidth   = 1
+            container.addChild(gb); aimGhostBall = gb
 
-        aimLine = line
-        addChild(line)
+            let tl = SKShapeNode()
+            tl.strokeColor = NSColor(red: 0.95, green: 0.75, blue: 0.20, alpha: 0.70)
+            tl.lineWidth = 1; tl.lineCap = .round
+            container.addChild(tl); aimTargetLine = tl
+
+            let dot = SKShapeNode(); dot.strokeColor = .clear
+            container.addChild(dot); aimPowerDot = dot
+
+            aimLine = container
+        }
+
+        // Ray-cast: find the first object ball the cue ball would hit.
+        // Solves |cuePos + t·dir - T|² = (2r)² for t > 0.
+        var closestT   = CGFloat.infinity
+        var ghostPos:   CGPoint? = nil
+        var hitBallPos: CGPoint? = nil
+
+        for (ballNode, _) in balls where ballNode !== cue {
+            let fx   = cue.position.x - ballNode.position.x
+            let fy   = cue.position.y - ballNode.position.y
+            let fd   = fx * dirX + fy * dirY
+            let disc = fd * fd - (fx * fx + fy * fy - ballRadius * ballRadius * 4)
+            guard disc >= 0 else { continue }
+            let t = -fd - sqrt(disc)
+            guard t > 0, t < closestT else { continue }
+            closestT   = t
+            ghostPos   = CGPoint(x: cue.position.x + t * dirX, y: cue.position.y + t * dirY)
+            hitBallPos = ballNode.position
+        }
+
+        // Update cue-ball path.
+        let cueEnd = ghostPos ?? rayToTableEdge(from: cue.position, dirX: dirX, dirY: dirY)
+        let cuePath = CGMutablePath(); cuePath.move(to: cue.position); cuePath.addLine(to: cueEnd)
+        aimCueLine?.path        = cuePath
+        aimCueLine?.strokeColor = NSColor.white.withAlphaComponent(0.45 + ratio * 0.35)
+
+        // Update ghost ball and target projection.
+        if let ghost = ghostPos, let hit = hitBallPos {
+            aimGhostBall?.position = ghost
+            aimGhostBall?.isHidden = false
+
+            let tddx = hit.x - ghost.x
+            let tddy = hit.y - ghost.y
+            let tddist = hypot(tddx, tddy)
+            if tddist > 0 {
+                let targetEnd = rayToTableEdge(from: hit, dirX: tddx / tddist, dirY: tddy / tddist)
+                let tp = CGMutablePath(); tp.move(to: hit); tp.addLine(to: targetEnd)
+                aimTargetLine?.path     = tp
+                aimTargetLine?.isHidden = false
+            } else {
+                aimTargetLine?.isHidden = true
+            }
+        } else {
+            aimGhostBall?.isHidden  = true
+            aimTargetLine?.isHidden = true
+        }
+
+        // Update power dot (radius varies with drag distance).
+        let dotR = 3 + ratio * 4
+        aimPowerDot?.path      = CGPath(ellipseIn: CGRect(x: -dotR, y: -dotR, width: dotR * 2, height: dotR * 2), transform: nil)
+        aimPowerDot?.position  = end
+        aimPowerDot?.fillColor = NSColor(red: 1, green: 0.5 - ratio * 0.5, blue: 0, alpha: 0.8)
     }
 
     // MARK: Physics contact
@@ -1336,7 +1428,7 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         colouredBalls.removeAll()
         cueBall = nil
         aimLine?.removeFromParent()
-        aimLine = nil
+        aimLine = nil; aimCueLine = nil; aimGhostBall = nil; aimTargetLine = nil; aimPowerDot = nil
         dHighlight?.removeFromParent()
         dHighlight = nil
         isPlacingCueBall    = false
@@ -1368,12 +1460,37 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // MARK: AI Player
 
     private func aiPlaceCueBall() {
-        let t = tableRect
+        let t       = tableRect
         let baulkX  = t.minX + t.width * 0.22
         let dCenter = CGPoint(x: baulkX, y: t.midY)
         let dRadius = t.width * 0.083
 
-        // Try D-centre then sweep around the semicircle for a free spot
+        // Hard mode: scan the full D arc and pick the position that gives the
+        // highest-probability opening shot instead of always using D-centre.
+        if aiDifficulty == .hard {
+            let targets   = validAITargets()
+            let obstacles = balls.keys.filter { $0 !== cueBall }.map { $0.position }
+            var bestPos   = dCenter
+            var bestProb: CGFloat = -1
+            let steps = 24
+            for i in 0...steps {
+                let angle = CGFloat(i) * .pi / CGFloat(steps)
+                let candidate = CGPoint(
+                    x: dCenter.x - cos(angle) * dRadius * 0.9,
+                    y: dCenter.y + sin(angle) * dRadius * 0.9
+                )
+                guard tableRect.contains(candidate), !overlapsAnyBall(candidate) else { continue }
+                let prob = bestShotProbability(from: candidate, targets: targets, obstacles: obstacles)
+                if prob > bestProb { bestProb = prob; bestPos = candidate }
+            }
+            gLog("AI (Hard) D-placement — best pos (\(String(format:"%.1f", bestPos.x)), \(String(format:"%.1f", bestPos.y))) prob \(String(format:"%.3f", bestProb))")
+            cueBall.position = bestPos
+            exitCueBallPlacement()
+            scheduleAIShot()
+            return
+        }
+
+        // Easy / Medium: try D-centre then sweep for any free spot.
         var placed = dCenter
         if overlapsAnyBall(placed) {
             var found = false
@@ -1414,24 +1531,29 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         let logDesc: String
 
         if aiDifficulty == .hard {
-            // Hard mode: evaluate every valid target × every pocket, pick highest probability.
+            // Hard mode: pick best pot; fall back to safety if nothing is on.
             guard let best = bestHardShot(cue: cue) else { return }
 
-            // Angle error scales with shot difficulty — easier shots are more precise
+            // Near-zero execution error — easy shots are nearly perfect.
             let maxErr: CGFloat
-            switch best.probability {
-            case 0.55...: maxErr = 0.005   // high-probability shot: near-perfect
-            case 0.25..<0.55: maxErr = 0.012
-            default:      maxErr = 0.020   // difficult shot: more variance
+            if best.isSafety {
+                maxErr = 0.008   // slight variance so safety isn't robotic
+            } else {
+                switch best.probability {
+                case 0.80...: maxErr = 0.000   // makeable pot — virtually perfect
+                case 0.55..<0.80: maxErr = 0.003
+                case 0.25..<0.55: maxErr = 0.010
+                default:      maxErr = 0.018
+                }
             }
             let error = CGFloat.random(in: -maxErr...maxErr)
             let angle = atan2(best.direction.dy, best.direction.dx) + error
 
-            // Power proportional to required distance — avoids overshooting short pots
-            let forceFraction = min(1.0, best.totalDist / 360.0)
-            let force = (55 + 95 * forceFraction) * powerMultiplier
+            // Use position-calibrated force stored in the shot.
+            let force = best.force * powerMultiplier
             impulse = CGVector(dx: cos(angle) * force, dy: sin(angle) * force)
-            logDesc = "target: \(best.targetType) at (\(String(format:"%.1f", best.target.position.x)), \(String(format:"%.1f", best.target.position.y))), prob: \(String(format:"%.2f", best.probability)), err: \(String(format:"%.4f", error)) rad, force: \(String(format:"%.0f", force))"
+            let shotKind = best.isSafety ? "SAFETY" : "pot"
+            logDesc = "\(shotKind) target: \(best.targetType) at (\(String(format:"%.1f", best.target.position.x)), \(String(format:"%.1f", best.target.position.y))), prob: \(String(format:"%.2f", best.probability)), err: \(String(format:"%.4f", error)) rad, force: \(String(format:"%.0f", force))"
         } else {
             // Easy / Medium: simple nearest-ball + nearest-pocket logic.
             guard let target = findAITarget() else { return }
@@ -1439,15 +1561,8 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
             let pockets    = aiPocketPositions()
             var bestDir    = CGVector(dx: 1, dy: 0)
             var bestCost   = CGFloat.infinity
-            for pocket in pockets {
-                let tdx = target.position.x - pocket.x
-                let tdy = target.position.y - pocket.y
-                let td  = hypot(tdx, tdy)
-                guard td > 0 else { continue }
-                let contact = CGPoint(
-                    x: target.position.x + (tdx / td) * ballRadius * 2,
-                    y: target.position.y + (tdy / td) * ballRadius * 2
-                )
+            for (pocketPos, _) in pockets {
+                guard let contact = ghostBallContact(target: target.position, pocket: pocketPos) else { continue }
                 let cdx = contact.x - cue.position.x
                 let cdy = contact.y - cue.position.y
                 let cd  = hypot(cdx, cdy)
@@ -1483,11 +1598,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     // MARK: Hard-mode shot selection
 
     private struct EvaluatedShot {
-        let target:     SKShapeNode
-        let targetType: BallType
-        let direction:  CGVector
+        let target:      SKShapeNode
+        let targetType:  BallType
+        let direction:   CGVector
         let probability: CGFloat
-        let totalDist:  CGFloat   // cue-to-contact + target-to-pocket, used for power scaling
+        let totalDist:   CGFloat   // cue-to-contact + target-to-pocket
+        let leavePos:    CGPoint   // expected cue ball rest after contact
+        let force:       CGFloat   // recommended impulse magnitude (pre-powerMultiplier)
+        let isSafety:    Bool      // true = intentional safety, not a pot attempt
     }
 
     /// Returns all valid target nodes for the current phase.
@@ -1509,17 +1627,14 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
     private func evaluateShot(cuePos: CGPoint,
                                target: SKShapeNode,
                                pocket: CGPoint,
+                               pocketRadius: CGFloat,
                                obstacles: [CGPoint]) -> (direction: CGVector, probability: CGFloat) {
-        let tdx = target.position.x - pocket.x
-        let tdy = target.position.y - pocket.y
-        let td  = hypot(tdx, tdy)
+        let td = hypot(target.position.x - pocket.x, target.position.y - pocket.y)
         guard td > 0 else { return (.zero, 0) }
 
-        // Ghost-ball contact point
-        let contact = CGPoint(
-            x: target.position.x + (tdx / td) * ballRadius * 2,
-            y: target.position.y + (tdy / td) * ballRadius * 2
-        )
+        guard let contact = ghostBallContact(target: target.position, pocket: pocket) else { return (.zero, 0) }
+        // Reject geometrically impossible shots where the cue ball position would be off-table.
+        guard tableRect.contains(contact) else { return (.zero, 0) }
 
         let cdx = contact.x - cuePos.x
         let cdy = contact.y - cuePos.y
@@ -1528,54 +1643,108 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
 
         let dir = CGVector(dx: cdx / cd, dy: cdy / cd)
 
-        // Cut angle: between cue-travel direction and target→pocket direction
-        let potDirX = (pocket.x - target.position.x) / td
-        let potDirY = (pocket.y - target.position.y) / td
-        let dot      = max(-1, min(1, Double(dir.dx * potDirX + dir.dy * potDirY)))
-        let cutAngle = CGFloat(acos(dot))
-
-        // Angle factor: cos⁴(θ) — aggressively penalises cut shots.
-        // Straight (0°) = 1.0 · 30° ≈ 0.56 · 45° ≈ 0.25 · 60° ≈ 0.06
+        // Cut angle: between cue-travel direction and target→pocket direction.
+        // cos⁴(θ) aggressively penalises cut shots: 0°=1.0, 30°≈0.56, 45°≈0.25, 60°≈0.06.
+        let potDirX  = (pocket.x - target.position.x) / td
+        let potDirY  = (pocket.y - target.position.y) / td
+        let cutAngle = CGFloat(acos(max(-1, min(1, Double(dir.dx * potDirX + dir.dy * potDirY)))))
         let angleFactor = pow(max(0, CGFloat(cos(Double(cutAngle)))), 4)
 
-        // Distance factor: tighter exponential — shorter shot is much easier
-        let totalDist  = cd + td
-        let distFactor = exp(-totalDist / 380)
+        // Distance factor scaled by pocket size — larger corner pockets are more forgiving.
+        let pocketScale = pocketRadius / cornerPocketRadius
+        let distFactor  = exp(-(cd + td) / (AIConfig.distDecayBase * pocketScale))
 
-        // Path factor: heavily penalise obstructed cue path
-        let pathFactor: CGFloat = isCuePath(from: cuePos, to: contact, clearOf: obstacles) ? 1.0 : 0.04
+        let cuePathFactor    = pathClearanceFactor(from: cuePos, to: contact, clearOf: obstacles)
+        let targetPathFactor = pathClearanceFactor(from: target.position, to: pocket, clearOf: obstacles)
+        let jawFactor        = middlePocketJawFactor(targetPos: target.position, pocket: pocket, td: td)
 
-        return (dir, angleFactor * distFactor * pathFactor)
+        return (dir, angleFactor * distFactor * cuePathFactor * targetPathFactor * jawFactor)
     }
 
-    /// Evaluates all valid targets × all pockets and returns the best shot.
+    /// Evaluates all valid targets × all pockets and returns the best shot,
+    /// using two-shot lookahead and position-calibrated force.
+    /// Falls back to a safety shot when no pot has acceptable probability.
     private func bestHardShot(cue: SKShapeNode) -> EvaluatedShot? {
         let targets   = validAITargets()
         let pockets   = aiPocketPositions()
         let obstacles = balls.keys.filter { $0 !== cue }.map { $0.position }
 
+        // Pre-compute which targets are valid for the *next* phase so the lookahead
+        // can estimate second-shot probability from the expected cue-ball leave.
+        let nextTargets: [(node: SKShapeNode, type: BallType)]
+        switch phase {
+        case .needRed:
+            // After a red the AI must pot a colour — any colour currently on the table.
+            nextTargets = colouredBalls.map { ($0.value, $0.key) }
+        case .needColour:
+            // After a colour the AI must pot a red.
+            nextTargets = balls.filter { $0.value == .red }.map { ($0.key, $0.value) }
+        case .redsAllGone:
+            nextTargets = []   // deterministic clearance — lookahead not needed
+        }
+
         var best: EvaluatedShot?
+        var bestScore: CGFloat = 0
 
         for (node, type) in targets {
-            // Exclude the target ball itself from the obstacle list
-            let obs = obstacles.filter {
-                hypot($0.x - node.position.x, $0.y - node.position.y) > ballRadius * 2
-            }
-            for pocket in pockets {
-                let (dir, prob) = evaluateShot(cuePos: cue.position,
-                                               target: node,
-                                               pocket: pocket,
-                                               obstacles: obs)
-                if prob > (best?.probability ?? 0) {
-                    let dist = hypot(node.position.x - pocket.x, node.position.y - pocket.y)
-                        + hypot(cue.position.x - node.position.x, cue.position.y - node.position.y)
-                    best = EvaluatedShot(target: node, targetType: type, direction: dir, probability: prob, totalDist: dist)
+            let obs = obstaclesExcluding(obstacles, ballAt: node.position)
+            for (pocketPos, pocketRadius) in pockets {
+                let (dir, potProb) = evaluateShot(cuePos: cue.position,
+                                                   target: node,
+                                                   pocket: pocketPos,
+                                                   pocketRadius: pocketRadius,
+                                                   obstacles: obs)
+                guard potProb > 0 else { continue }
+
+                guard let ghost = ghostBallContact(target: node.position, pocket: pocketPos) else { continue }
+                let cd = hypot(ghost.x - cue.position.x, ghost.y - cue.position.y)
+
+                let leavePos = expectedCueBallLeave(
+                    ghostPos: ghost, targetPos: node.position,
+                    dirX: dir.dx, dirY: dir.dy, cueDistance: cd
+                )
+
+                let lookaheadProb = nextTargets.isEmpty ? 0 :
+                    bestShotProbability(from: leavePos, targets: nextTargets, obstacles: obstacles)
+
+                // In needColour phase prefer positions that set up reds (higher lookahead weight).
+                let lw = phase == .needColour ? AIConfig.lookaheadWeightColour : AIConfig.lookaheadWeightRed
+                let combinedScore = potProb * (1 - lw) + lookaheadProb * lw
+
+                if combinedScore > bestScore {
+                    bestScore = combinedScore
+
+                    // Calibrate force so the cue ball rolls toward the next target after contact.
+                    let td = hypot(node.position.x - pocketPos.x, node.position.y - pocketPos.y)
+                    let nextTarget = nextTargets.min {
+                        hypot($0.node.position.x - leavePos.x, $0.node.position.y - leavePos.y) <
+                        hypot($1.node.position.x - leavePos.x, $1.node.position.y - leavePos.y)
+                    }
+                    let desiredRoll: CGFloat
+                    if let nt = nextTarget {
+                        let distToNext = hypot(nt.node.position.x - ghost.x, nt.node.position.y - ghost.y)
+                        desiredRoll = max(AIConfig.minDesiredRoll, distToNext - AIConfig.targetLeaveBuffer)
+                    } else {
+                        desiredRoll = cd * 0.5
+                    }
+                    let force = 50 + 100 * min(1.0, (cd + td + desiredRoll) / AIConfig.forceCalibDist)
+
+                    best = EvaluatedShot(target: node, targetType: type, direction: dir,
+                                         probability: potProb, totalDist: cd + td,
+                                         leavePos: leavePos, force: force, isSafety: false)
                 }
             }
         }
 
+        if (best?.probability ?? 0) < AIConfig.safetyThreshold {
+            if let safeShot = bestSafetyShot(cue: cue) {
+                gLog("AI (Hard) playing safety — best pot prob was \(String(format:"%.3f", best?.probability ?? 0))")
+                return safeShot
+            }
+        }
+
         if let best {
-            gLog("AI (Hard) best shot: \(best.targetType), prob \(String(format:"%.3f", best.probability))", .debug)
+            gLog("AI (Hard) best shot: \(best.targetType), pot \(String(format:"%.3f", best.probability)), score \(String(format:"%.3f", bestScore)), force \(String(format:"%.0f", best.force))", .debug)
         } else {
             gLog("AI (Hard) — no shot found", .warning)
         }
@@ -1605,39 +1774,153 @@ final class SnookerScene: SKScene, SKPhysicsContactDelegate {
         }
     }
 
-    /// Returns true when the cue ball can travel from `from` to `to` without
-    /// passing within one ball-diameter of any obstacle centre.
-    private func isCuePath(from: CGPoint, to: CGPoint, clearOf obstacles: [CGPoint]) -> Bool {
+    /// Ghost-ball contact point: the cue ball centre position needed to send `target` toward `pocket`.
+    private func ghostBallContact(target: CGPoint, pocket: CGPoint) -> CGPoint? {
+        let tdx = target.x - pocket.x
+        let tdy = target.y - pocket.y
+        let td  = hypot(tdx, tdy)
+        guard td > 0 else { return nil }
+        return CGPoint(x: target.x + (tdx / td) * ballRadius * 2,
+                       y: target.y + (tdy / td) * ballRadius * 2)
+    }
+
+    /// Filters `obstacles` to exclude any point within touching distance of `target`.
+    private func obstaclesExcluding(_ obstacles: [CGPoint], ballAt target: CGPoint) -> [CGPoint] {
+        obstacles.filter { hypot($0.x - target.x, $0.y - target.y) > ballRadius * 2 }
+    }
+
+    /// Returns a smooth clearance factor in [0.02, 1.0] for the straight path from `from` to `to`.
+    /// 1.0 = fully unobstructed; degrades quadratically as obstacles encroach; floors at 0.02.
+    private func pathClearanceFactor(from: CGPoint, to: CGPoint, clearOf obstacles: [CGPoint]) -> CGFloat {
         let dx   = to.x - from.x
         let dy   = to.y - from.y
         let len2 = dx * dx + dy * dy
-        guard len2 > 0 else { return true }
-        let minDist = ballRadius * 2   // cue + obstacle both have radius r
+        guard len2 > 0 else { return 1.0 }
+        let threshold2 = ballRadius * ballRadius * 4   // (2r)² — avoids sqrt in the inner loop
 
+        var minDist2 = CGFloat.infinity
         for obs in obstacles {
             let fx = obs.x - from.x
             let fy = obs.y - from.y
-            // Project onto segment, clamp to [0,1]
             let t  = max(0, min(1, (fx * dx + fy * dy) / len2))
             let ex = from.x + t * dx - obs.x
             let ey = from.y + t * dy - obs.y
-            if ex * ex + ey * ey < minDist * minDist {
-                return false
-            }
+            let d2 = ex * ex + ey * ey
+            if d2 < minDist2 { minDist2 = d2 }
         }
-        return true
+        guard minDist2 < threshold2 else { return 1.0 }
+        let ratio = max(0, sqrt(minDist2) / (ballRadius * 2))   // single sqrt at the end
+        return max(0.02, ratio * ratio)
     }
 
-    private func aiPocketPositions() -> [CGPoint] {
-        let t = tableRect
-        return [
-            CGPoint(x: t.minX, y: t.minY),
-            CGPoint(x: t.midX, y: t.minY),
-            CGPoint(x: t.maxX, y: t.minY),
-            CGPoint(x: t.minX, y: t.maxY),
-            CGPoint(x: t.midX, y: t.maxY),
-            CGPoint(x: t.maxX, y: t.maxY),
-        ]
+    /// Penalises shallow-angle approaches into middle pockets.
+    /// Middle pockets (at midX on the long cushions) require the ball to arrive roughly
+    /// perpendicular to the cushion; a near-parallel approach rattles the jaws.
+    private func middlePocketJawFactor(targetPos: CGPoint, pocket: CGPoint, td: CGFloat) -> CGFloat {
+        guard abs(pocket.x - tableRect.midX) < 2 else { return 1.0 }   // not a middle pocket
+        // approachY is the y-component of the normalised target→pocket direction.
+        // 1.0 = straight into the pocket, 0.0 = parallel to the cushion.
+        let approachY = abs((pocket.y - targetPos.y) / td)
+        return approachY * approachY   // quadratic: 45° approach → 0.5, very shallow → ~0
+    }
+
+    /// Estimates where the cue ball comes to rest after striking a target ball.
+    /// Uses the natural-angle model: post-contact direction is perpendicular to the
+    /// contact normal, and the ball rolls roughly half the pre-contact distance.
+    private func expectedCueBallLeave(ghostPos: CGPoint,
+                                       targetPos: CGPoint,
+                                       dirX: CGFloat, dirY: CGFloat,
+                                       cueDistance: CGFloat) -> CGPoint {
+        let cnx = targetPos.x - ghostPos.x
+        let cny = targetPos.y - ghostPos.y
+        let cnLen = hypot(cnx, cny)
+        guard cnLen > 0 else { return ghostPos }
+        let nx = cnx / cnLen
+        let ny = cny / cnLen
+
+        // Remove component along contact normal — leaves only the lateral (deflected) component.
+        let dot  = dirX * nx + dirY * ny
+        let deflX = dirX - dot * nx
+        let deflY = dirY - dot * ny
+        let deflLen = hypot(deflX, deflY)
+        // Straight shot (dot ≈ 1): cue ball stuns and stops near contact point.
+        guard deflLen > 0.01 else { return ghostPos }
+
+        // Post-contact roll ≈ 50 % of the pre-contact travel distance.
+        let rollDist = cueDistance * 0.50
+        let rawX = ghostPos.x + (deflX / deflLen) * rollDist
+        let rawY = ghostPos.y + (deflY / deflLen) * rollDist
+        return CGPoint(
+            x: max(tableRect.minX + ballRadius, min(tableRect.maxX - ballRadius, rawX)),
+            y: max(tableRect.minY + ballRadius, min(tableRect.maxY - ballRadius, rawY))
+        )
+    }
+
+    /// Returns the highest pot probability achievable for any of `targets` from `cuePos`.
+    private func bestShotProbability(from cuePos: CGPoint,
+                                      targets: [(node: SKShapeNode, type: BallType)],
+                                      obstacles: [CGPoint]) -> CGFloat {
+        let pockets = aiPocketPositions()
+        var best: CGFloat = 0
+        for (node, _) in targets {
+            let obs = obstaclesExcluding(obstacles, ballAt: node.position)
+            for (pocketPos, pocketRadius) in pockets {
+                let (_, p) = evaluateShot(cuePos: cuePos, target: node,
+                                          pocket: pocketPos, pocketRadius: pocketRadius,
+                                          obstacles: obs)
+                if p > best { best = p }
+            }
+        }
+        return best
+    }
+
+    /// Returns the best safety shot when no pot is on: finds a valid first contact that
+    /// leaves the cue ball in a position minimising the opponent's follow-up probability.
+    private func bestSafetyShot(cue: SKShapeNode) -> EvaluatedShot? {
+        let targets      = validAITargets()
+        let allObstacles = balls.keys.filter { $0 !== cue }.map { $0.position }
+
+        var bestShot:        EvaluatedShot? = nil
+        var bestSafetyScore: CGFloat        = -1
+
+        for (node, type) in targets {
+            let dxCT   = node.position.x - cue.position.x
+            let dyCT   = node.position.y - cue.position.y
+            let distCT = hypot(dxCT, dyCT)
+            guard distCT > 0 else { continue }
+            let dirX = dxCT / distCT
+            let dirY = dyCT / distCT
+
+            // Centre-ball ghost position for a direct hit.
+            let ghost = CGPoint(x: node.position.x - dirX * ballRadius * 2,
+                                y: node.position.y - dirY * ballRadius * 2)
+            let obs   = obstaclesExcluding(allObstacles, ballAt: node.position)
+            guard pathClearanceFactor(from: cue.position, to: ghost, clearOf: obs) > AIConfig.safetyPathThreshold
+            else { continue }
+
+            let cd       = hypot(ghost.x - cue.position.x, ghost.y - cue.position.y)
+            let leavePos = expectedCueBallLeave(ghostPos: ghost, targetPos: node.position,
+                                                dirX: dirX, dirY: dirY, cueDistance: cd * 0.3)
+
+            let safetyScore = 1.0 - bestShotProbability(from: leavePos, targets: targets,
+                                                         obstacles: allObstacles)
+            if safetyScore > bestSafetyScore {
+                bestSafetyScore = safetyScore
+                let force = max(AIConfig.safetyForceMin, min(AIConfig.safetyForceMax, cd * 0.45))
+                bestShot = EvaluatedShot(
+                    target: node, targetType: type,
+                    direction: CGVector(dx: dirX, dy: dirY),
+                    probability: 0, totalDist: distCT,
+                    leavePos: leavePos, force: force, isSafety: true
+                )
+            }
+        }
+        return bestShot
+    }
+
+    /// Returns the stored pocket positions and radii populated during setupPockets().
+    private func aiPocketPositions() -> [(position: CGPoint, radius: CGFloat)] {
+        return pocketData
     }
 }
 
